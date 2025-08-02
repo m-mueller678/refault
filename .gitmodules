@@ -1,0 +1,12 @@
+[submodule "deterministic_simulation_example/getrandom"]
+	path = deterministic_simulation_example/getrandom
+	url = git@gitlab.com:andreasstangl/getrandom.git
+[submodule "getrandom"]
+	path = getrandom
+	url = git@gitlab.com:andreasstangl/getrandom.git
+[submodule "rand"]
+	path = rand
+	url = git@gitlab.com:andreasstangl/rand.git
+[submodule "agnostik"]
+	path = agnostik
+	url = git@gitlab.com:andreasstangl/agnostik.git

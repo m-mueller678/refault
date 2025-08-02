@@ -1,0 +1,13 @@
+[package]
+name = "deterministic-simulation-examples"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+deterministic_simulation_core = { path = "../deterministic_simulation_core" }
+getrandom = "0.3.3"
+human-duration = "0.1.0"
+rand = "0.9.1"
+agnostik = { path = "../agnostik" }
+
+[features]
