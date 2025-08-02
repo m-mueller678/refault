@@ -1,3 +1,5 @@
+use crate::context::CONTEXT;
+use crate::event::record_event;
 use std::fmt::Display;
 use std::future::Future;
 use std::ops::{Add, Sub};
@@ -6,8 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::thread;
 use std::time::Duration;
-use crate::context::CONTEXT;
-use crate::event::record_event;
 
 pub fn sleep(duration: Duration) -> TimeFuture {
     TimeFuture::new(duration)
@@ -33,18 +33,19 @@ impl TimeFutureState {
 
 impl TimeFuture {
     fn new(duration: Duration) -> TimeFuture {
-        let state = Arc::new(Mutex::new(
-            TimeFutureState {
-                completed: false,
-                waker: None,
-            }
-        ));
-        let mut context_binding = CONTEXT.lock().unwrap();
-        let context = context_binding.as_mut().unwrap();
-        context.executor.time_scheduler.lock().unwrap().schedule_future(state.clone(), duration);
-        Self {
-            state,
-        }
+        let state = Arc::new(Mutex::new(TimeFutureState {
+            completed: false,
+            waker: None,
+        }));
+        let mut context = CONTEXT.lock().unwrap();
+        let context = context.as_mut().unwrap();
+        context
+            .executor
+            .time_scheduler
+            .lock()
+            .unwrap()
+            .schedule_future(state.clone(), duration);
+        Self { state }
     }
 }
 
@@ -62,78 +63,31 @@ impl Future for TimeFuture {
     }
 }
 
-pub(crate) trait TimeScheduler {
-    fn schedule_future(&mut self, future_state: Arc<Mutex<TimeFutureState>>, duration: Duration);
-    fn wait_until_next_future_ready(&mut self);
-    fn elapsed(&self) -> Duration;
-}
-
-pub(crate) struct FastForwardTimeScheduler {
+pub(crate) struct TimeScheduler {
     upcoming_events: Vec<(Duration, Arc<Mutex<TimeFutureState>>)>,
     elapsed_time: Duration,
+    fast_forward: bool,
 }
 
-impl FastForwardTimeScheduler {
-    pub(crate) fn new() -> Self {
-       Self {
-           upcoming_events: vec![],
-           elapsed_time: Duration::from_secs(0),
-       }
-    }
-}
-
-impl TimeScheduler for FastForwardTimeScheduler {
-    fn schedule_future(&mut self, future_state: Arc<Mutex<TimeFutureState>>, duration: Duration) {
-        self.upcoming_events.push((self.elapsed_time.add(duration), future_state));
-    }
-
-    fn wait_until_next_future_ready(&mut self) {
-        if self.upcoming_events.is_empty() {
-            return;
-        }
-
-        self.upcoming_events.sort_by(|first, second| {
-            let (time1, _) = first;
-            let (time2, _) = second;
-            time1.cmp(time2)
-        });
-        let (next_event_duration, _) = self.upcoming_events[0];
-        record_event(TimeAdvancedEvent::new(next_event_duration.sub(self.elapsed_time)));
-        self.elapsed_time = next_event_duration.clone();
-        while self.upcoming_events.len() > 0 {
-            if self.upcoming_events[0].0 != next_event_duration {
-                break;
-            }
-            let (_, future) =  self.upcoming_events.remove(0);
-            future.lock().unwrap().complete();
-        }
-    }
-    
-    fn elapsed(&self) -> Duration {
-        self.elapsed_time.clone()
-    }
-}
-
-pub(crate) struct RealisticTimeScheduler {
-    upcoming_events: Vec<(Duration, Arc<Mutex<TimeFutureState>>)>,
-    elapsed_time: Duration,
-}
-
-impl RealisticTimeScheduler {
-    pub(crate) fn new() -> Self {
+impl TimeScheduler {
+    pub(crate) fn new(fast_forward: bool) -> Self {
         Self {
             upcoming_events: vec![],
             elapsed_time: Duration::from_secs(0),
+            fast_forward,
         }
     }
-}
 
-impl TimeScheduler for RealisticTimeScheduler {
-    fn schedule_future(&mut self, future_state: Arc<Mutex<TimeFutureState>>, duration: Duration) {
-        self.upcoming_events.push((self.elapsed_time.add(duration), future_state));
+    pub(crate) fn schedule_future(
+        &mut self,
+        future_state: Arc<Mutex<TimeFutureState>>,
+        duration: Duration,
+    ) {
+        self.upcoming_events
+            .push((self.elapsed_time.add(duration), future_state));
     }
 
-    fn wait_until_next_future_ready(&mut self) {
+    pub(crate) fn wait_until_next_future_ready(&mut self) {
         if self.upcoming_events.is_empty() {
             return;
         }
@@ -143,21 +97,26 @@ impl TimeScheduler for RealisticTimeScheduler {
             let (time2, _) = second;
             time1.cmp(time2)
         });
+
         let (next_event_duration, _) = self.upcoming_events[0];
-        let sleep_duration = next_event_duration.sub(self.elapsed_time);
-        record_event(TimeAdvancedEvent::new(sleep_duration));
-        thread::sleep(sleep_duration);
+        let wait_duration = next_event_duration.sub(self.elapsed_time);
+        record_event(TimeAdvancedEvent::new(wait_duration));
+        if !self.fast_forward {
+            thread::sleep(wait_duration);
+        }
+
         self.elapsed_time = next_event_duration.clone();
+
         while self.upcoming_events.len() > 0 {
             if self.upcoming_events[0].0 != next_event_duration {
                 break;
             }
-            let (_, future) =  self.upcoming_events.remove(0);
+            let (_, future) = self.upcoming_events.remove(0);
             future.lock().unwrap().complete();
         }
     }
 
-    fn elapsed(&self) -> Duration {
+    pub(crate) fn elapsed(&self) -> Duration {
         self.elapsed_time.clone()
     }
 }
@@ -168,9 +127,7 @@ struct TimeAdvancedEvent {
 
 impl TimeAdvancedEvent {
     fn new(duration: Duration) -> Box<Self> {
-        Box::new(Self {
-            duration,
-        })
+        Box::new(Self { duration })
     }
 }
 

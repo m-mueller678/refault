@@ -1,25 +1,27 @@
-use std::fmt::{Display, Formatter};
 use crate::context::{Context, CONTEXT};
+use crate::event::record_event;
+use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
-use crate::task::{ObservingFuture, Task, TaskTrackingFuture};
+use std::cell::RefCell;
+use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Poll, Waker};
-use crate::event::record_event;
 
 pub type NodeId = u64;
 
-pub(crate) static NODES: Mutex<Vec<Node>> = Mutex::new(vec!());
+thread_local! {
+    pub(crate) static NODES: RefCell<Vec<Node>> = RefCell::new(vec!());
+}
 
 pub fn get_node(id: &NodeId) -> Node {
-    {
-        let mutex_guard = NODES.lock().unwrap();
-        for node in mutex_guard.iter() {
+    NODES.with(|nodes| {
+        for node in nodes.borrow().iter() {
             return node.clone();
         }
-    }
-    panic!("Found no node with id {id}");
+        panic!("Found no node with id {id}");
+    })
 }
 
 pub(crate) struct NodeIdSupplier {
@@ -41,27 +43,34 @@ impl NodeIdSupplier {
 #[derive(Clone)]
 pub struct Node {
     pub id: NodeId,
-    pub(crate) incoming_packages: Arc<Mutex<Vec<NetworkPackage>>>,
-    pub(crate) new_package_waker: Arc<Mutex<Option<Waker>>>,
+    pub(crate) incoming_messages: Arc<Mutex<Vec<NetworkPackage>>>,
+    pub(crate) new_message_waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl Node {
     pub fn new() -> Node {
-        let mut context_binding = CONTEXT.lock().unwrap();
-        let id = context_binding.as_mut().unwrap().node_id_supplier.generate_id() as NodeId;
+        let mut context = CONTEXT.lock().unwrap();
+        let id = context.as_mut().unwrap().node_id_supplier.generate_id() as NodeId;
         let new_node = Node {
             id,
-            incoming_packages: Arc::new(Mutex::new(vec!())),
-            new_package_waker: Arc::new(Mutex::new(None)),
+            incoming_messages: Arc::new(Mutex::new(vec![])),
+            new_message_waker: Arc::new(Mutex::new(None)),
         };
-        NODES.lock().unwrap().push(new_node.clone());
+
+        NODES.with(|nodes| {
+            nodes.borrow_mut().push(new_node.clone());
+        });
+
         new_node
     }
 
-    pub fn spawn<T: Send + 'static>(&self, future: impl Future<Output=T> + 'static + Send + Sync) -> TaskTrackingFuture<T> {
-        record_event(Box::new(NodeSpawnedEvent{node_id: self.id}));
-        
-        let state = Arc::new(Mutex::new(crate::task::TaskTrackingFutureState::new()));
+    pub fn spawn<T: Send + 'static>(
+        &self,
+        future: impl Future<Output = T> + 'static + Send + Sync,
+    ) -> TaskTrackingFuture<T> {
+        record_event(Box::new(NodeSpawnedEvent { node_id: self.id }));
+
+        let state = Arc::new(Mutex::new(crate::executor::TaskTrackingFutureState::new()));
         let observing_future = ObservingFuture {
             state: state.clone(),
             inner: Mutex::new(Box::pin(future)),
@@ -71,18 +80,16 @@ impl Node {
             id: self.id,
             inner: Mutex::new(Box::pin(observing_future)),
         }));
-        let mut binding = CONTEXT.lock().unwrap();
-        let context: &mut Context = binding.as_mut().unwrap();
+        let mut mutex_guard = CONTEXT.lock().unwrap();
+        let context: &mut Context = mutex_guard.as_mut().unwrap();
         context.executor.queue(task);
 
-        TaskTrackingFuture {
-            inner: state,
-        }
+        TaskTrackingFuture { inner: state }
     }
 
-    pub fn receive_package(&self, package: NetworkPackage) {
-        self.incoming_packages.lock().unwrap().push(package);
-        let mut waker_option = self.new_package_waker.lock().unwrap();
+    pub fn receive_message(&self, message: NetworkPackage) {
+        self.incoming_messages.lock().unwrap().push(message);
+        let mut waker_option = self.new_message_waker.lock().unwrap();
         if let Some(waker) = waker_option.take() {
             waker.wake();
         }
@@ -101,7 +108,7 @@ impl Display for NodeSpawnedEvent {
 
 pub(crate) struct NodeAwareFuture {
     pub(crate) id: NodeId,
-    pub(crate) inner: Mutex<Pin<Box<dyn Future<Output=()> + Send + Sync + 'static>>>,
+    pub(crate) inner: Mutex<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
 }
 
 impl Future for NodeAwareFuture {
@@ -136,4 +143,10 @@ fn clear_node() {
         panic!("Node not set!");
     }
     context.current_node = None;
+}
+
+pub(crate) fn reset_nodes() {
+    NODES.with(|nodes| {
+        nodes.borrow_mut().clear();
+    });
 }
