@@ -1,4 +1,4 @@
-use crate::context::{Context, CONTEXT};
+use crate::context::{CONTEXT, Context};
 use crate::event::record_event;
 use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
@@ -17,6 +17,7 @@ thread_local! {
 
 pub fn get_node(id: &NodeId) -> Node {
     NODES.with(|nodes| {
+        //TODO this looks wrong
         for node in nodes.borrow().iter() {
             return node.clone();
         }

@@ -1,9 +1,9 @@
-use crate::context::{Context, CONTEXT};
+use crate::context::{CONTEXT, Context};
 #[cfg(feature = "log_events")]
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, Task};
 use crate::network::{DefaultNetwork, Network};
-use crate::node::{reset_nodes, NodeIdSupplier};
+use crate::node::{NodeIdSupplier, reset_nodes};
 use rand_2::SeedableRng;
 use rand_chacha_2::ChaCha12Rng;
 use std::sync::Arc;
@@ -38,6 +38,7 @@ impl Runtime {
         self.run_simulation(future, options);
     }
 
+    // TODO organize cfgs
     #[allow(unused_variables)] // The function panics if event logging is not enabled. In that case, some variables are unused
     pub fn record_events(
         &self,

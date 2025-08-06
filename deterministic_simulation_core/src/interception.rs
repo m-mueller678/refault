@@ -1,4 +1,4 @@
-use crate::context::{Context, CONTEXT};
+use crate::context::{CONTEXT, Context};
 use rand_2::RngCore;
 use std::time::Duration;
 
@@ -33,6 +33,7 @@ unsafe extern "C" fn clock_gettime(
     _clockid: libc::clockid_t,
     tp: *mut libc::timespec,
 ) -> libc::c_int {
+    //TODO acquire lock only once
     if CONTEXT.lock().unwrap().is_some() {
         unsafe {
             let mut mutex_guard = CONTEXT.lock().unwrap();

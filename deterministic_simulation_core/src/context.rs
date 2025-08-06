@@ -6,6 +6,7 @@ use crate::node::{NodeId, NodeIdSupplier};
 use rand_chacha_2::ChaCha12Rng;
 use std::sync::{Arc, Mutex};
 
+//TODO make private, add accessor
 pub static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
 pub struct Context {

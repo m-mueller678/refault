@@ -1,6 +1,6 @@
 use crate::context::CONTEXT;
 use crate::executor::spawn;
-use crate::node::{current_node, get_node, Node, NodeId};
+use crate::node::{Node, NodeId, current_node, get_node};
 use crate::time::sleep;
 use std::future::Future;
 use std::pin::Pin;
@@ -42,6 +42,7 @@ impl Future for NetworkListenFuture {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut node_waker = self.node.new_message_waker.lock().unwrap();
         if node_waker.is_some() {
+            // TODO check this at future creation
             panic!("There already is another listener on this node.");
         }
 

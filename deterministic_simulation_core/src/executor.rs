@@ -1,6 +1,6 @@
-use crate::context::{Context, CONTEXT};
+use crate::context::{CONTEXT, Context};
 use crate::event::record_event;
-use crate::node::{current_node, NodeAwareFuture};
+use crate::node::{NodeAwareFuture, current_node};
 use crate::time::TimeScheduler;
 use std::fmt::Display;
 use std::future::Future;
@@ -34,6 +34,7 @@ impl Executor {
         // Allow &self to be used within the thread that is being spawned. This operation is safe
         // since the thread is immediately being joined after it is created. Thereby, &self is never
         // used outside the run function.
+        // TODO use scoped thread
         let static_selfref: &'static Self = unsafe { transmute(self) };
 
         // Run the simulation on a new thread to avoid thread local state on this thread interfering
@@ -204,6 +205,7 @@ impl<T> Future for ObservingFuture<T> {
     }
 }
 
+// TODO make event enum
 struct TaskSpawnedEvent {}
 
 impl TaskSpawnedEvent {
