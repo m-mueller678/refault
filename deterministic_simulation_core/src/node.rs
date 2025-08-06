@@ -17,11 +17,14 @@ thread_local! {
 
 pub fn get_node(id: &NodeId) -> Node {
     NODES.with(|nodes| {
-        //TODO this looks wrong
-        for node in nodes.borrow().iter() {
-            return node.clone();
-        }
-        panic!("Found no node with id {id}");
+        nodes
+            .borrow()
+            .iter()
+            .find(|x| x.id == *id)
+            .unwrap_or_else(|| {
+                panic!("Found no node with id {id}");
+            })
+            .clone()
     })
 }
 

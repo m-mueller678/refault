@@ -4,8 +4,8 @@ use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, Valida
 use crate::executor::{Executor, Task};
 use crate::network::{DefaultNetwork, Network};
 use crate::node::{NodeIdSupplier, reset_nodes};
-use rand_2::SeedableRng;
-use rand_chacha_2::ChaCha12Rng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 use std::sync::Arc;
 
 pub struct Runtime {

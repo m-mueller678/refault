@@ -1,5 +1,5 @@
 use crate::context::{CONTEXT, Context};
-use rand_2::RngCore;
+use rand::RngCore;
 use std::time::Duration;
 
 #[unsafe(no_mangle)]

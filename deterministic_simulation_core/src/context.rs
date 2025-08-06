@@ -3,7 +3,7 @@ use crate::event::EventHandler;
 use crate::executor::Executor;
 use crate::network::Network;
 use crate::node::{NodeId, NodeIdSupplier};
-use rand_chacha_2::ChaCha12Rng;
+use rand_chacha::ChaCha12Rng;
 use std::sync::{Arc, Mutex};
 
 //TODO make private, add accessor
