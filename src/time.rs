@@ -1,6 +1,5 @@
 use crate::context::with_context;
 use crate::event::{Event, record_event};
-use std::fmt::Display;
 use std::future::Future;
 use std::ops::{Add, Sub};
 use std::pin::Pin;
@@ -118,21 +117,5 @@ impl TimeScheduler {
 
     pub(crate) fn elapsed(&self) -> Duration {
         self.elapsed_time
-    }
-}
-
-struct TimeAdvancedEvent {
-    duration: Duration,
-}
-
-impl TimeAdvancedEvent {
-    fn new(duration: Duration) -> Box<Self> {
-        Box::new(Self { duration })
-    }
-}
-
-impl Display for TimeAdvancedEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TimeAdvancedEvent{{duration: {:?}}}", self.duration)
     }
 }

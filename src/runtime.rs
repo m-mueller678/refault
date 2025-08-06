@@ -44,20 +44,11 @@ impl Runtime {
         self.fast_forward_time = fast_forward_time;
         self
     }
-    fn validate_events(
-        &self,
-        future: impl Future<Output = ()> + Send + Sync + 'static,
-        events: Arc<Vec<Event>>,
-    ) {
-        let events_size = events.len();
-        let event_handler = ValidatingEventHandler::new(events);
-        let next_event_index = event_handler.next_event_index;
-        self.run_simulation(future, Box::new(event_handler));
-    }
 
     pub fn run(&self, f: impl 'static + Send + Sync + Future<Output = ()>) {
         self.run_simulation(f, Box::new(NoopEventHandler));
     }
+
     pub fn check_determinism<T: Future<Output = ()> + Send + Sync + 'static>(
         &self,
         mut future_producer: impl FnMut() -> T,
@@ -67,7 +58,10 @@ impl Runtime {
         let event_handler = RecordingEventHandler::new();
         let events = Arc::new(self.run_simulation(future_producer(), Box::new(event_handler)));
         for _ in 1..iterations {
-            self.validate_events(future_producer(), events.clone());
+            self.run_simulation(
+                future_producer(),
+                Box::new(ValidatingEventHandler::new(events.clone())),
+            );
         }
     }
 
@@ -110,20 +104,6 @@ impl Runtime {
             random_generator: ChaCha12Rng::seed_from_u64(self.seed),
             simulation_start_time: self.simulation_start_time,
             nodes: Vec::new(),
-        }
-    }
-}
-
-struct ExecutionOptions {
-    fast_forward_time: bool,
-    event_handler: Box<dyn EventHandler + Send>,
-}
-
-impl Default for ExecutionOptions {
-    fn default() -> Self {
-        Self {
-            fast_forward_time: true,
-            event_handler: Box::new(NoopEventHandler),
         }
     }
 }

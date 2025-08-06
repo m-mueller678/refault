@@ -2,7 +2,6 @@ use crate::context::with_context;
 use crate::event::{Event, record_event};
 use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
-use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -91,16 +90,6 @@ impl Node {
         if let Some(waker) = waker_option.take() {
             waker.wake();
         }
-    }
-}
-
-struct NodeSpawnedEvent {
-    node_id: NodeId,
-}
-
-impl Display for NodeSpawnedEvent {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NodeSpawnedEvent{{node_id: {}}}", self.node_id)
     }
 }
 
