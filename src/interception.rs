@@ -1,10 +1,10 @@
-use crate::context::with_context;
+use crate::context::with_context_option;
 use rand::RngCore;
 use std::time::Duration;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isize {
-    with_context(|context| {
+    with_context_option(|context| {
         if let Some(context) = context {
             unsafe {
                 for i in 0..buflen {
@@ -32,7 +32,7 @@ unsafe extern "C" fn clock_gettime(
     _clockid: libc::clockid_t,
     tp: *mut libc::timespec,
 ) -> libc::c_int {
-    with_context(|context| {
+    with_context_option(|context| {
         if let Some(context) = context {
             unsafe {
                 let execution_duration = context.executor.time_scheduler.lock().unwrap().elapsed();

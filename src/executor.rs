@@ -1,4 +1,4 @@
-use crate::context::{Context, with_context};
+use crate::context::{Context, with_context, with_context_option};
 use crate::event::{Event, record_event};
 use crate::node::{NodeAwareFuture, current_node};
 use crate::time::TimeScheduler;
@@ -31,26 +31,17 @@ impl Executor {
     }
 
     pub(crate) fn run(&self) {
-        // Run the simulation on a new thread to avoid thread local state on this thread interfering
-        // with random number generation
-        thread::scope(|scope| {
-            scope
-                .spawn(move || {
-                    while let Some(task) = self.next_queue_item() {
-                        task.poll();
-                        record_event(Event::FuturePolledEvent);
+        while let Some(task) = self.next_queue_item() {
+            task.poll();
+            record_event(Event::FuturePolledEvent);
 
-                        if self.queue.lock().unwrap().is_empty() {
-                            self.time_scheduler
-                                .lock()
-                                .unwrap()
-                                .wait_until_next_future_ready();
-                        }
-                    }
-                })
-                .join()
-                .unwrap();
-        })
+            if self.queue.lock().unwrap().is_empty() {
+                self.time_scheduler
+                    .lock()
+                    .unwrap()
+                    .wait_until_next_future_ready();
+            }
+        }
     }
 
     fn next_queue_item(&self) -> Option<Arc<Task>> {
@@ -98,7 +89,6 @@ impl NotifyingWaker {
 impl Wake for NotifyingWaker {
     fn wake(self: Arc<Self>) {
         with_context(|context| {
-            let context: &mut Context = context.as_mut().unwrap();
             context.executor.queue(self.task.clone());
         });
     }
@@ -123,7 +113,7 @@ pub fn spawn<T: Send + 'static>(
         }),
         None => Task::new(observing_future),
     });
-    with_context(|cx| cx.as_mut().unwrap().executor.queue(task));
+    with_context(|cx| cx.executor.queue(task));
     TaskTrackingFuture { inner: state }
 }
 

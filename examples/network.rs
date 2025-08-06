@@ -1,6 +1,6 @@
 use deterministic_simulation_core::executor::spawn;
-use deterministic_simulation_core::network::{listen, send, Network, NetworkPackage};
-use deterministic_simulation_core::node::{current_node, get_node, Node};
+use deterministic_simulation_core::network::{Network, NetworkPackage, listen, send};
+use deterministic_simulation_core::node::{Node, current_node, get_node};
 use deterministic_simulation_core::runtime::Runtime;
 use deterministic_simulation_core::time::sleep;
 use rand::Rng;
@@ -23,14 +23,10 @@ impl Network for CustomNetwork {
 }
 
 fn main() {
-    let runtime = Runtime {
-        // Register the custom network with the runtime
-        network: Arc::new(CustomNetwork {}),
-        ..Default::default()
-    };
+    let runtime = Runtime::default().with_network(Arc::new(CustomNetwork {}));
 
     // Simulate two nodes communicating over the network
-    runtime.simulate(async {
+    runtime.run(async {
         let receiver_node = Node::new();
         let receiver_node_id = receiver_node.id;
 

@@ -9,6 +9,7 @@ libc = "1.0.0-alpha.1"
 rand = {version="0.9",default-features = false}
 rand_chacha="0.9"
 agnostik = "0.2"
+borrow_channel="0.4"
 
 [dev-dependencies]
 chrono = "0.4.41"

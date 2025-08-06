@@ -1,9 +1,11 @@
 use crate::{
-    context::{Context, with_context},
+    context::{Context, with_context, with_context_option},
     node::NodeId,
 };
 use std::{
+    any::Any,
     fmt,
+    rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -18,69 +20,86 @@ pub enum Event {
 
 pub fn record_event(event: Event) {
     with_context(|context| {
-        context.as_mut().unwrap().event_handler.handle_event(event);
+        context.event_handler.handle_event(event);
     })
 }
 
-pub(crate) trait EventHandler {
-    fn handle_event(&self, event: Event);
+pub(crate) trait EventHandler: Send {
+    fn handle_event(&mut self, event: Event);
+    fn finalize(self: Box<Self>) -> Vec<Event>;
 }
 
 pub(crate) struct NoopEventHandler;
 
 impl EventHandler for NoopEventHandler {
-    fn handle_event(&self, _: Event) {}
+    fn handle_event(&mut self, _: Event) {}
+
+    fn finalize(self: Box<Self>) -> Vec<Event> {
+        Vec::new()
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct RecordingEventHandler {
-    pub(crate) recorded_events: Arc<Mutex<Vec<Event>>>,
+    pub(crate) recorded_events: Vec<Event>,
 }
 
 impl RecordingEventHandler {
     pub(crate) fn new() -> Self {
         Self {
-            recorded_events: Arc::new(Mutex::new(vec![])),
+            recorded_events: Default::default(),
         }
     }
 }
 
 impl EventHandler for RecordingEventHandler {
-    fn handle_event(&self, event: Event) {
-        self.recorded_events.lock().unwrap().push(event);
+    fn handle_event(&mut self, event: Event) {
+        self.recorded_events.push(event);
+    }
+
+    fn finalize(self: Box<Self>) -> Vec<Event> {
+        self.recorded_events
     }
 }
 
 pub(crate) struct ValidatingEventHandler {
-    events_to_validate: Vec<Event>,
-    pub(crate) next_event_index: Arc<Mutex<usize>>,
+    events_to_validate: Arc<Vec<Event>>,
+    pub(crate) next_event_index: usize,
 }
 
 impl ValidatingEventHandler {
-    pub(crate) fn new(previous_events: Vec<Event>) -> Self {
+    pub(crate) fn new(previous_events: Arc<Vec<Event>>) -> Self {
         Self {
             events_to_validate: previous_events,
-            next_event_index: Arc::new(Mutex::new(0)),
+            next_event_index: 0,
         }
     }
 }
 
 impl EventHandler for ValidatingEventHandler {
-    fn handle_event(&self, event: Event) {
-        let mut index_mutex_guard = self.next_event_index.lock().unwrap();
+    fn handle_event(&mut self, event: Event) {
         let current_event = event;
-        if *index_mutex_guard >= self.events_to_validate.len() {
+        if self.next_event_index >= self.events_to_validate.len() {
             panic!(
                 "Non-Determinism detected: Expected no further events, but got '{current_event:?}'",
             );
         }
-        let index = *index_mutex_guard;
-        let expected = &self.events_to_validate[index];
+        let expected = &self.events_to_validate[self.next_event_index];
         if current_event != *expected {
             panic!(
                 "Non-Determinism detected: Validation failed for event {index}: Expected '{expected:?}', but got '{current_event:?}'",
+                index = self.next_event_index
             );
         }
-        *index_mutex_guard += 1;
+        self.next_event_index += 1;
+    }
+
+    fn finalize(self: Box<Self>) -> Vec<Event> {
+        let index = self.next_event_index;
+        let len = self.events_to_validate.len();
+        if index != len {
+            panic!("Non-Determinism detected: Expected {len} events but only got {index}",);
+        }
+        Vec::new()
     }
 }

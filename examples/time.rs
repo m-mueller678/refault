@@ -5,13 +5,10 @@ use std::time::{Duration, SystemTime};
 
 fn main() {
     // Define custom start time of simulation
-    let runtime = Runtime {
-        simulation_start_time: 1893456000000, // 2030
-        ..Default::default()
-    };
+    let runtime = Runtime::default().with_simulation_start_time(1893456000000);
 
     // Retrieve simulated time at different points in the simulation
-    runtime.simulate(async {
+    runtime.run(async {
         let now: DateTime<Utc> = SystemTime::now().into();
         println!("{}", now);
 

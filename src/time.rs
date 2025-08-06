@@ -1,4 +1,4 @@
-use crate::context::{self, with_context};
+use crate::context::{self, with_context, with_context_option};
 use crate::event::{Event, record_event};
 use std::fmt::Display;
 use std::future::Future;
@@ -39,8 +39,6 @@ impl TimeFuture {
         }));
         with_context(|context| {
             context
-                .as_mut()
-                .unwrap()
                 .executor
                 .time_scheduler
                 .lock()

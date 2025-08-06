@@ -1,4 +1,4 @@
-use crate::context::with_context;
+use crate::context::{with_context, with_context_option};
 use crate::event::{Event, record_event};
 use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
@@ -11,14 +11,9 @@ use std::task::{Poll, Waker};
 
 pub type NodeId = u64;
 
-thread_local! {
-    pub(crate) static NODES: RefCell<Vec<Node>> = RefCell::new(vec!());
-}
-
 pub fn get_node(id: &NodeId) -> Node {
-    NODES.with(|nodes| {
-        nodes
-            .borrow()
+    with_context(|cx| {
+        cx.nodes
             .iter()
             .find(|x| x.id == *id)
             .unwrap_or_else(|| {
@@ -54,17 +49,13 @@ pub struct Node {
 impl Node {
     pub fn new() -> Node {
         with_context(|context| {
-            let id = context.as_mut().unwrap().node_id_supplier.generate_id() as NodeId;
+            let id = context.node_id_supplier.generate_id() as NodeId;
             let new_node = Node {
                 id,
                 incoming_messages: Arc::new(Mutex::new(vec![])),
                 new_message_waker: Arc::new(Mutex::new(None)),
             };
-
-            NODES.with(|nodes| {
-                nodes.borrow_mut().push(new_node.clone());
-            });
-
+            context.nodes.push(new_node.clone());
             new_node
         })
     }
@@ -85,7 +76,7 @@ impl Node {
             id: self.id,
             inner: Mutex::new(Box::pin(observing_future)),
         }));
-        with_context(|context| context.as_mut().unwrap().executor.queue(task));
+        with_context(|context| context.executor.queue(task));
         TaskTrackingFuture { inner: state }
     }
 
@@ -125,12 +116,11 @@ impl Future for NodeAwareFuture {
 }
 
 pub fn current_node() -> Option<NodeId> {
-    with_context(|context| context.as_ref()?.current_node)
+    with_context(|context| context.current_node)
 }
 
 fn set_node(id: NodeId) {
     with_context(|context| {
-        let context = context.as_mut().unwrap();
         if context.current_node.is_some() {
             panic!("Node already set!");
         }
@@ -140,16 +130,9 @@ fn set_node(id: NodeId) {
 
 fn clear_node() {
     with_context(|context| {
-        let context = context.as_mut().unwrap();
         if context.current_node.is_some() {
             panic!("Node not set!");
         }
         context.current_node = None;
     })
-}
-
-pub(crate) fn reset_nodes() {
-    NODES.with(|nodes| {
-        nodes.borrow_mut().clear();
-    });
 }

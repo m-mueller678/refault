@@ -1,17 +1,20 @@
-use crate::context::{Context, with_context};
+use crate::context::{Context, run_with_context, with_context_option};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, Task};
 use crate::network::{DefaultNetwork, Network};
-use crate::node::{NodeIdSupplier, reset_nodes};
+use crate::node::NodeIdSupplier;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
+use std::rc::Rc;
 use std::sync::Arc;
+use std::thread;
 
 pub struct Runtime {
-    pub seed: u64,
-    pub simulation_start_time: u64,
-    pub network: Arc<dyn Network + Send + Sync + 'static>,
+    seed: u64,
+    simulation_start_time: u64,
+    network: Arc<dyn Network + Send + Sync + 'static>,
+    fast_forward_time: bool,
 }
 
 impl Default for Runtime {
@@ -20,115 +23,95 @@ impl Default for Runtime {
             seed: 0,
             simulation_start_time: 1750363615882u64,
             network: Arc::new(DefaultNetwork {}),
+            fast_forward_time: true,
         }
     }
 }
 
 impl Runtime {
-    pub fn run(&self, future: impl Future<Output = ()> + Send + Sync + 'static) {
-        let options = ExecutionOptions {
-            fast_forward_time: false,
-            ..Default::default()
-        };
-        self.run_simulation(future, options);
+    pub fn with_network(mut self, net: Arc<dyn Network + Send + 'static + Sync>) -> Self {
+        self.network = net;
+        self
     }
-
-    pub fn simulate(&self, future: impl Future<Output = ()> + Send + Sync + 'static) {
-        let options = ExecutionOptions::default();
-        self.run_simulation(future, options);
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
+        self
     }
-
-    pub fn record_events(
+    pub fn with_simulation_start_time(mut self, simulation_start_time: u64) -> Self {
+        self.simulation_start_time = simulation_start_time;
+        self
+    }
+    pub fn with_fast_forward_time(mut self, fast_forward_time: bool) -> Self {
+        self.fast_forward_time = fast_forward_time;
+        self
+    }
+    fn validate_events(
         &self,
         future: impl Future<Output = ()> + Send + Sync + 'static,
-    ) -> Vec<Event> {
-        let event_handler = RecordingEventHandler::new();
-        let options = ExecutionOptions {
-            event_handler: Box::new(event_handler.clone()),
-            ..Default::default()
-        };
-
-        self.run_simulation(future, options);
-
-        event_handler.recorded_events.lock().unwrap().clone()
-    }
-
-    pub fn validate(
-        &self,
-        future: impl Future<Output = ()> + Send + Sync + 'static,
-        events: Vec<Event>,
+        events: Arc<Vec<Event>>,
     ) {
         let events_size = events.len();
-        let event_handler = ValidatingEventHandler::new(events);
+        let mut event_handler = ValidatingEventHandler::new(events);
         let next_event_index = event_handler.next_event_index.clone();
-        let options = ExecutionOptions {
-            event_handler: Box::new(event_handler),
-            ..Default::default()
-        };
-
-        self.run_simulation(future, options);
-
-        if *next_event_index.lock().unwrap() != events_size {
-            panic!(
-                "Non-Determinism detected: Expected {} events but only got {}",
-                events_size,
-                *next_event_index.lock().unwrap()
-            );
-        }
+        self.run_simulation(future, Box::new(event_handler));
     }
 
+    pub fn run(&self, f: impl 'static + Send + Sync + Future<Output = ()>) {
+        self.run_simulation(f, Box::new(NoopEventHandler));
+    }
     pub fn check_determinism<T: Future<Output = ()> + Send + Sync + 'static>(
         &self,
-        future_producer: fn() -> T,
+        mut future_producer: impl FnMut() -> T,
         iterations: usize,
     ) {
-        if iterations < 2 {
-            panic!("Future must be executed at least twice to check determinism!");
-        }
-
-        let events = self.record_events(future_producer());
+        assert!(iterations > 1);
+        let mut event_handler = RecordingEventHandler::new();
+        let events = Arc::new(self.run_simulation(future_producer(), Box::new(event_handler)));
         for _ in 1..iterations {
-            self.validate(future_producer(), events.clone());
+            self.validate_events(future_producer(), events.clone());
         }
     }
 
     fn run_simulation(
         &self,
         future: impl Future<Output = ()> + Send + Sync + 'static,
-        options: ExecutionOptions,
-    ) {
-        let executor = Arc::new(Executor::new(options.fast_forward_time));
-        executor.queue(Arc::new(Task::new(future)));
-
-        self.initialize_context(executor.clone(), options);
-
-        executor.run();
-        Self::reset();
-    }
-
-    #[allow(unused_variables)] // In case event logging is disabled, 'options' is not actually required
-    fn initialize_context(&self, executor: Arc<Executor>, options: ExecutionOptions) {
-        with_context(|context_option| {
-            if context_option.is_some() {
-                panic!("Cannot create new context: Context already exists.");
-            }
-            *context_option = Some(Context {
-                executor: executor.clone(),
-                node_id_supplier: NodeIdSupplier::new(),
-                current_node: None,
-                network: self.network.clone(),
-                event_handler: options.event_handler,
-                random_generator: ChaCha12Rng::seed_from_u64(self.seed),
-                simulation_start_time: self.simulation_start_time,
-            });
+        event_handler: Box<dyn EventHandler>,
+    ) -> Vec<Event> {
+        // Run the simulation on a new thread to avoid thread local state on this thread interfering
+        // with random number generation
+        thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    let executor = Arc::new(Executor::new(self.fast_forward_time));
+                    executor.queue(Arc::new(Task::new(future)));
+                    let ((), context) = run_with_context(
+                        self.make_context(executor.clone(), event_handler),
+                        || {
+                            executor.run();
+                        },
+                    );
+                    context.event_handler.finalize()
+                })
+                .join()
+                .unwrap()
         })
     }
 
-    fn reset() {
-        with_context(|cx| {
-            *cx = None;
-        });
-        reset_nodes();
+    fn make_context(
+        &self,
+        executor: Arc<Executor>,
+        event_handler: Box<dyn EventHandler>,
+    ) -> Context {
+        Context {
+            executor: executor.clone(),
+            node_id_supplier: NodeIdSupplier::new(),
+            current_node: None,
+            network: self.network.clone(),
+            event_handler: event_handler,
+            random_generator: ChaCha12Rng::seed_from_u64(self.seed),
+            simulation_start_time: self.simulation_start_time,
+            nodes: Vec::new(),
+        }
     }
 }
 
