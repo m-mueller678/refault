@@ -1,4 +1,4 @@
-use crate::context::{with_context, with_context_option};
+use crate::context::with_context;
 use crate::executor::spawn;
 use crate::node::{Node, NodeId, current_node, get_node};
 use crate::time::sleep;

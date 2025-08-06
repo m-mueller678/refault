@@ -1,4 +1,4 @@
-use crate::context::{Context, run_with_context, with_context_option};
+use crate::context::{Context, run_with_context};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, Task};
@@ -6,7 +6,6 @@ use crate::network::{DefaultNetwork, Network};
 use crate::node::NodeIdSupplier;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
 
@@ -51,8 +50,8 @@ impl Runtime {
         events: Arc<Vec<Event>>,
     ) {
         let events_size = events.len();
-        let mut event_handler = ValidatingEventHandler::new(events);
-        let next_event_index = event_handler.next_event_index.clone();
+        let event_handler = ValidatingEventHandler::new(events);
+        let next_event_index = event_handler.next_event_index;
         self.run_simulation(future, Box::new(event_handler));
     }
 
@@ -65,7 +64,7 @@ impl Runtime {
         iterations: usize,
     ) {
         assert!(iterations > 1);
-        let mut event_handler = RecordingEventHandler::new();
+        let event_handler = RecordingEventHandler::new();
         let events = Arc::new(self.run_simulation(future_producer(), Box::new(event_handler)));
         for _ in 1..iterations {
             self.validate_events(future_producer(), events.clone());
@@ -107,7 +106,7 @@ impl Runtime {
             node_id_supplier: NodeIdSupplier::new(),
             current_node: None,
             network: self.network.clone(),
-            event_handler: event_handler,
+            event_handler,
             random_generator: ChaCha12Rng::seed_from_u64(self.seed),
             simulation_start_time: self.simulation_start_time,
             nodes: Vec::new(),

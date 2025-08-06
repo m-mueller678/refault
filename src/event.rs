@@ -1,14 +1,5 @@
-use crate::{
-    context::{Context, with_context, with_context_option},
-    node::NodeId,
-};
-use std::{
-    any::Any,
-    fmt,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use crate::{context::with_context, node::NodeId};
+use std::{sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Event {

@@ -4,21 +4,20 @@ use crate::network::Network;
 use crate::node::{Node, NodeId, NodeIdSupplier};
 use rand_chacha::ChaCha12Rng;
 use std::cell::RefCell;
-use std::mem;
 use std::sync::Arc;
 thread_local! {
 
-static CONTEXT: RefCell<Option<Context>> = RefCell::new(None);
+static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn with_context_option<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
-    CONTEXT.with(|c| f(&mut *c.borrow_mut()))
+    CONTEXT.with(|c| f(&mut c.borrow_mut()))
 }
 pub(crate) fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
     with_context_option(|cx| f(cx.as_mut().expect("no context set")))
 }
 pub(crate) fn run_with_context<R>(context: Context, f: impl FnOnce() -> R) -> (R, Context) {
-    with_context_option(|c| assert!(mem::replace(c, Some(context)).is_none()));
+    with_context_option(|c| assert!(c.replace(context).is_none()));
     let r = f();
     let context = with_context_option(|c| c.take().unwrap());
     (r, context)

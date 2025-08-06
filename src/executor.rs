@@ -1,15 +1,12 @@
-use crate::context::{Context, with_context, with_context_option};
+use crate::context::with_context;
 use crate::event::{Event, record_event};
 use crate::node::{NodeAwareFuture, current_node};
 use crate::time::TimeScheduler;
-use std::fmt::Display;
 use std::future::Future;
-use std::mem::transmute;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::Poll::{Pending, Ready};
 use std::task::{Poll, Wake, Waker};
-use std::thread;
 
 pub(crate) struct Executor {
     queue: Mutex<Vec<Arc<Task>>>,
@@ -165,7 +162,7 @@ impl<T> Future for ObservingFuture<T> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<()> {
-        let context = &mut std::task::Context::from_waker(&cx.waker());
+        let context = &mut std::task::Context::from_waker(cx.waker());
         let poll = self.inner.lock().unwrap().as_mut().poll(context);
 
         match poll {
@@ -176,11 +173,8 @@ impl<T> Future for ObservingFuture<T> {
                     state.waker.take()
                 };
 
-                match waker_option {
-                    Some(waker) => {
-                        waker.wake();
-                    }
-                    _ => {}
+                if let Some(waker) = waker_option {
+                    waker.wake();
                 }
                 Ready(())
             }

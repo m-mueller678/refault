@@ -1,8 +1,7 @@
-use crate::context::{with_context, with_context_option};
+use crate::context::with_context;
 use crate::event::{Event, record_event};
 use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
-use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::future::Future;
 use std::pin::Pin;
@@ -44,6 +43,12 @@ pub struct Node {
     pub id: NodeId,
     pub(crate) incoming_messages: Arc<Mutex<Vec<NetworkPackage>>>,
     pub(crate) new_message_waker: Arc<Mutex<Option<Waker>>>,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Node {

@@ -1,4 +1,4 @@
-use crate::context::{self, with_context, with_context_option};
+use crate::context::with_context;
 use crate::event::{Event, record_event};
 use std::fmt::Display;
 use std::future::Future;
@@ -105,9 +105,9 @@ impl TimeScheduler {
             thread::sleep(wait_duration);
         }
 
-        self.elapsed_time = next_event_duration.clone();
+        self.elapsed_time = next_event_duration;
 
-        while self.upcoming_events.len() > 0 {
+        while !self.upcoming_events.is_empty() {
             if self.upcoming_events[0].0 != next_event_duration {
                 break;
             }
@@ -117,7 +117,7 @@ impl TimeScheduler {
     }
 
     pub(crate) fn elapsed(&self) -> Duration {
-        self.elapsed_time.clone()
+        self.elapsed_time
     }
 }
 
