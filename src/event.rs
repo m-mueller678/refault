@@ -17,11 +17,9 @@ pub enum Event {
 }
 
 pub fn record_event(event: Event) {
-    if cfg!(feature = "log_events") {
-        with_context(|context| {
-            context.as_mut().unwrap().event_handler.handle_event(event);
-        })
-    }
+    with_context(|context| {
+        context.as_mut().unwrap().event_handler.handle_event(event);
+    })
 }
 
 pub(crate) trait EventHandler {

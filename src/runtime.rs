@@ -1,6 +1,5 @@
 use crate::context::{Context, with_context};
 use crate::event::Event;
-#[cfg(feature = "log_events")]
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, Task};
 use crate::network::{DefaultNetwork, Network};
@@ -39,85 +38,57 @@ impl Runtime {
         self.run_simulation(future, options);
     }
 
-    // TODO organize cfgs
-    #[allow(unused_variables)] // The function panics if event logging is not enabled. In that case, some variables are unused
     pub fn record_events(
         &self,
         future: impl Future<Output = ()> + Send + Sync + 'static,
     ) -> Vec<Event> {
-        #[cfg(not(feature = "log_events"))]
-        panic!(
-            "Cannot validate events when event logging is disabled. Please enable the 'log_events' feature."
-        );
+        let event_handler = RecordingEventHandler::new();
+        let options = ExecutionOptions {
+            event_handler: Box::new(event_handler.clone()),
+            ..Default::default()
+        };
 
-        #[cfg(feature = "log_events")]
-        {
-            let event_handler = RecordingEventHandler::new();
-            let options = ExecutionOptions {
-                event_handler: Box::new(event_handler.clone()),
-                ..Default::default()
-            };
+        self.run_simulation(future, options);
 
-            self.run_simulation(future, options);
-
-            event_handler.recorded_events.lock().unwrap().clone()
-        }
+        event_handler.recorded_events.lock().unwrap().clone()
     }
 
-    #[allow(unused_variables)] // The function panics if event logging is not enabled. In that case, some variables are unused
     pub fn validate(
         &self,
         future: impl Future<Output = ()> + Send + Sync + 'static,
         events: Vec<Event>,
     ) {
-        #[cfg(not(feature = "log_events"))]
-        panic!(
-            "Cannot validate events when event logging is disabled. Please enable the 'log_events' feature."
-        );
+        let events_size = events.len();
+        let event_handler = ValidatingEventHandler::new(events);
+        let next_event_index = event_handler.next_event_index.clone();
+        let options = ExecutionOptions {
+            event_handler: Box::new(event_handler),
+            ..Default::default()
+        };
 
-        #[cfg(feature = "log_events")]
-        {
-            let events_size = events.len();
-            let event_handler = ValidatingEventHandler::new(events);
-            let next_event_index = event_handler.next_event_index.clone();
-            let options = ExecutionOptions {
-                event_handler: Box::new(event_handler),
-                ..Default::default()
-            };
+        self.run_simulation(future, options);
 
-            self.run_simulation(future, options);
-
-            if *next_event_index.lock().unwrap() != events_size {
-                panic!(
-                    "Non-Determinism detected: Expected {} events but only got {}",
-                    events_size,
-                    *next_event_index.lock().unwrap()
-                );
-            }
+        if *next_event_index.lock().unwrap() != events_size {
+            panic!(
+                "Non-Determinism detected: Expected {} events but only got {}",
+                events_size,
+                *next_event_index.lock().unwrap()
+            );
         }
     }
 
-    #[allow(unused_variables)] // The function panics if event logging is not enabled. In that case, some variables are unused
     pub fn check_determinism<T: Future<Output = ()> + Send + Sync + 'static>(
         &self,
         future_producer: fn() -> T,
         iterations: usize,
     ) {
-        #[cfg(not(feature = "log_events"))]
-        panic!(
-            "Check determinism when event logging is disabled. Please enable the 'log_events' feature."
-        );
+        if iterations < 2 {
+            panic!("Future must be executed at least twice to check determinism!");
+        }
 
-        #[cfg(feature = "log_events")]
-        {
-            if iterations < 2 {
-                panic!("Future must be executed at least twice to check determinism!");
-            }
-
-            let events = self.record_events(future_producer());
-            for _ in 1..iterations {
-                self.validate(future_producer(), events.clone());
-            }
+        let events = self.record_events(future_producer());
+        for _ in 1..iterations {
+            self.validate(future_producer(), events.clone());
         }
     }
 
@@ -146,7 +117,6 @@ impl Runtime {
                 node_id_supplier: NodeIdSupplier::new(),
                 current_node: None,
                 network: self.network.clone(),
-                #[cfg(feature = "log_events")]
                 event_handler: options.event_handler,
                 random_generator: ChaCha12Rng::seed_from_u64(self.seed),
                 simulation_start_time: self.simulation_start_time,
@@ -164,7 +134,6 @@ impl Runtime {
 
 struct ExecutionOptions {
     fast_forward_time: bool,
-    #[cfg(feature = "log_events")]
     event_handler: Box<dyn EventHandler + Send>,
 }
 
@@ -172,7 +141,6 @@ impl Default for ExecutionOptions {
     fn default() -> Self {
         Self {
             fast_forward_time: true,
-            #[cfg(feature = "log_events")]
             event_handler: Box::new(NoopEventHandler),
         }
     }
