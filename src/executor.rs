@@ -8,13 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll::{Pending, Ready};
 use std::task::{Poll, Wake, Waker};
 
-pub(crate) struct Executor {
+pub struct Executor {
     queue: Mutex<Vec<Arc<Task>>>,
-    pub(crate) time_scheduler: Mutex<TimeScheduler>,
+    pub time_scheduler: Mutex<TimeScheduler>,
 }
 
 impl Executor {
-    pub(crate) fn new(fast_forward_time: bool) -> Executor {
+    pub fn new(fast_forward_time: bool) -> Executor {
         let time_scheduler: Mutex<TimeScheduler> =
             Mutex::new(TimeScheduler::new(fast_forward_time));
         Self {
@@ -23,11 +23,11 @@ impl Executor {
         }
     }
 
-    pub(crate) fn queue(&self, task: Arc<Task>) {
+    pub fn queue(&self, task: Arc<Task>) {
         self.queue.lock().unwrap().push(task);
     }
 
-    pub(crate) fn run(&self) {
+    pub fn run(&self) {
         while let Some(task) = self.next_queue_item() {
             task.poll();
             record_event(Event::FuturePolledEvent);
@@ -51,7 +51,7 @@ impl Executor {
     }
 }
 
-pub(crate) struct Task {
+pub struct Task {
     future: Mutex<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
 }
 
@@ -115,7 +115,7 @@ pub fn spawn<T: Send + 'static>(
 }
 
 pub struct TaskTrackingFuture<T> {
-    pub(crate) inner: Arc<Mutex<TaskTrackingFutureState<T>>>,
+    pub inner: Arc<Mutex<TaskTrackingFutureState<T>>>,
 }
 
 impl<T> TaskTrackingFuture<T> {
@@ -124,13 +124,13 @@ impl<T> TaskTrackingFuture<T> {
     }
 }
 
-pub(crate) struct TaskTrackingFutureState<T> {
+pub struct TaskTrackingFutureState<T> {
     result: Option<T>,
     waker: Option<Waker>,
 }
 
 impl<T> TaskTrackingFutureState<T> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             result: None,
             waker: None,
@@ -153,9 +153,9 @@ impl<T> Future for TaskTrackingFuture<T> {
     }
 }
 
-pub(crate) struct ObservingFuture<T> {
-    pub(crate) state: Arc<Mutex<TaskTrackingFutureState<T>>>,
-    pub(crate) inner: Mutex<Pin<Box<dyn Future<Output = T> + Send + Sync + 'static>>>,
+pub struct ObservingFuture<T> {
+    pub state: Arc<Mutex<TaskTrackingFutureState<T>>>,
+    pub inner: Mutex<Pin<Box<dyn Future<Output = T> + Send + Sync + 'static>>>,
 }
 
 impl<T> Future for ObservingFuture<T> {

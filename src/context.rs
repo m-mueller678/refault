@@ -10,25 +10,25 @@ thread_local! {
 static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn with_context_option<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
+pub fn with_context_option<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
     CONTEXT.with(|c| f(&mut c.borrow_mut()))
 }
-pub(crate) fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
+pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
     with_context_option(|cx| f(cx.as_mut().expect("no context set")))
 }
-pub(crate) fn run_with_context<R>(context: Context, f: impl FnOnce() -> R) -> (R, Context) {
+pub fn run_with_context<R>(context: Context, f: impl FnOnce() -> R) -> (R, Context) {
     with_context_option(|c| assert!(c.replace(context).is_none()));
     let r = f();
     let context = with_context_option(|c| c.take().unwrap());
     (r, context)
 }
 pub struct Context {
-    pub(crate) executor: Arc<Executor>,
-    pub(crate) node_id_supplier: NodeIdSupplier,
-    pub(crate) current_node: Option<NodeId>,
-    pub(crate) event_handler: Box<dyn EventHandler>,
+    pub executor: Arc<Executor>,
+    pub node_id_supplier: NodeIdSupplier,
+    pub current_node: Option<NodeId>,
+    pub event_handler: Box<dyn EventHandler>,
     pub random_generator: ChaCha12Rng,
     pub simulation_start_time: u64,
     pub network: Arc<dyn Network + Send + Sync>,
-    pub(crate) nodes: Vec<Node>,
+    pub nodes: Vec<Node>,
 }
