@@ -1,11 +1,15 @@
 [package]
-name = "deterministic_simulation"
+name = "deterministic_simulation_core"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-agnostik = { path = "./agnostik", features = ["runtime_deterministic_simulation"] }
-chrono = "0.4.41"
-deterministic_simulation_core = {path = "deterministic_simulation_core"}
-getrandom = "0.3.3"
-rand = "0.9.2"
+lazy_static = "1.5.0"
+libc = "1.0.0-alpha.1"
+rand = {version="0.9",default-features = false}
+rand_chacha="0.9"
+
+[features]
+log_events = []
+print_events = ["log_events"]
+
