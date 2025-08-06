@@ -32,7 +32,6 @@ unsafe extern "C" fn clock_gettime(
     _clockid: libc::clockid_t,
     tp: *mut libc::timespec,
 ) -> libc::c_int {
-    //TODO acquire lock only once
     with_context(|context| {
         if let Some(context) = context {
             unsafe {

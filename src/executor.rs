@@ -31,30 +31,26 @@ impl Executor {
     }
 
     pub(crate) fn run(&self) {
-        // Allow &self to be used within the thread that is being spawned. This operation is safe
-        // since the thread is immediately being joined after it is created. Thereby, &self is never
-        // used outside the run function.
-        // TODO use scoped thread
-        let static_selfref: &'static Self = unsafe { transmute(self) };
-
         // Run the simulation on a new thread to avoid thread local state on this thread interfering
         // with random number generation
-        thread::spawn(move || {
-            while let Some(task) = static_selfref.next_queue_item() {
-                task.poll();
-                record_event(FuturePolledEvent::new());
+        thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    while let Some(task) = self.next_queue_item() {
+                        task.poll();
+                        record_event(FuturePolledEvent::new());
 
-                if static_selfref.queue.lock().unwrap().is_empty() {
-                    static_selfref
-                        .time_scheduler
-                        .lock()
-                        .unwrap()
-                        .wait_until_next_future_ready();
-                }
-            }
+                        if self.queue.lock().unwrap().is_empty() {
+                            self.time_scheduler
+                                .lock()
+                                .unwrap()
+                                .wait_until_next_future_ready();
+                        }
+                    }
+                })
+                .join()
+                .unwrap();
         })
-        .join()
-        .unwrap();
     }
 
     fn next_queue_item(&self) -> Option<Arc<Task>> {

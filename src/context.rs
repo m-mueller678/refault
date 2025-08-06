@@ -6,7 +6,6 @@ use crate::node::{NodeId, NodeIdSupplier};
 use rand_chacha::ChaCha12Rng;
 use std::sync::{Arc, Mutex};
 
-//TODO make private, add accessor
 static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
 pub(crate) fn with_context<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
