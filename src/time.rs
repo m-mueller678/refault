@@ -1,5 +1,5 @@
 use crate::context::{self, with_context};
-use crate::event::record_event;
+use crate::event::{Event, record_event};
 use std::fmt::Display;
 use std::future::Future;
 use std::ops::{Add, Sub};
@@ -102,7 +102,7 @@ impl TimeScheduler {
 
         let (next_event_duration, _) = self.upcoming_events[0];
         let wait_duration = next_event_duration.sub(self.elapsed_time);
-        record_event(TimeAdvancedEvent::new(wait_duration));
+        record_event(Event::TimeAdvancedEvent(wait_duration));
         if !self.fast_forward {
             thread::sleep(wait_duration);
         }

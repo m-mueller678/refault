@@ -1,47 +1,44 @@
-#[cfg(feature = "log_events")]
-use crate::context::{Context, CONTEXT};
-#[cfg(feature = "log_events")]
-use std::sync::{Arc, Mutex};
+use crate::{
+    context::{Context, with_context},
+    node::NodeId,
+};
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-#[cfg(feature = "log_events")]
-type Event = dyn ToString;
-
-#[cfg(feature = "log_events")]
-pub fn record_event(event: Box<Event>) {
-    #[cfg(feature = "print_events")]
-    println!("{}", event.to_string());
-
-    let mut mutex_guard = CONTEXT.lock().unwrap();
-    let context: &mut Context = mutex_guard.as_mut().unwrap();
-    context.event_handler.handle_event(event);
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Event {
+    FuturePolledEvent,
+    TimeAdvancedEvent(Duration),
+    NodeSpawnedEvent { node_id: NodeId },
+    TaskSpawnedEvent,
 }
 
-#[cfg(not(feature = "log_events"))]
-pub fn record_event(_: Box<dyn ToString>) {
-    // Do nothing
+pub fn record_event(event: Event) {
+    if cfg!(feature = "log_events") {
+        with_context(|context| {
+            context.as_mut().unwrap().event_handler.handle_event(event);
+        })
+    }
 }
 
-#[cfg(feature = "log_events")]
 pub(crate) trait EventHandler {
-    #[allow(dead_code)] // Not required when event recording is disabled
-    fn handle_event(&self, event: Box<Event>);
+    fn handle_event(&self, event: Event);
 }
 
-#[cfg(feature = "log_events")]
 pub(crate) struct NoopEventHandler;
 
-#[cfg(feature = "log_events")]
 impl EventHandler for NoopEventHandler {
-    fn handle_event(&self, _: Box<Event>) {}
+    fn handle_event(&self, _: Event) {}
 }
 
-#[cfg(feature = "log_events")]
 #[derive(Clone)]
 pub(crate) struct RecordingEventHandler {
-    pub(crate) recorded_events: Arc<Mutex<Vec<String>>>,
+    pub(crate) recorded_events: Arc<Mutex<Vec<Event>>>,
 }
 
-#[cfg(feature = "log_events")]
 impl RecordingEventHandler {
     pub(crate) fn new() -> Self {
         Self {
@@ -50,22 +47,19 @@ impl RecordingEventHandler {
     }
 }
 
-#[cfg(feature = "log_events")]
 impl EventHandler for RecordingEventHandler {
-    fn handle_event(&self, event: Box<Event>) {
-        self.recorded_events.lock().unwrap().push(event.to_string());
+    fn handle_event(&self, event: Event) {
+        self.recorded_events.lock().unwrap().push(event);
     }
 }
 
-#[cfg(feature = "log_events")]
 pub(crate) struct ValidatingEventHandler {
-    events_to_validate: Vec<String>,
+    events_to_validate: Vec<Event>,
     pub(crate) next_event_index: Arc<Mutex<usize>>,
 }
 
-#[cfg(feature = "log_events")]
 impl ValidatingEventHandler {
-    pub(crate) fn new(previous_events: Vec<String>) -> Self {
+    pub(crate) fn new(previous_events: Vec<Event>) -> Self {
         Self {
             events_to_validate: previous_events,
             next_event_index: Arc::new(Mutex::new(0)),
@@ -73,21 +67,20 @@ impl ValidatingEventHandler {
     }
 }
 
-#[cfg(feature = "log_events")]
 impl EventHandler for ValidatingEventHandler {
-    fn handle_event(&self, event: Box<Event>) {
+    fn handle_event(&self, event: Event) {
         let mut index_mutex_guard = self.next_event_index.lock().unwrap();
-        let current_event = event.to_string();
+        let current_event = event;
         if *index_mutex_guard >= self.events_to_validate.len() {
             panic!(
-                "Non-Determinism detected: Expected no further events, but got '{}'",
-                current_event
+                "Non-Determinism detected: Expected no further events, but got '{current_event:?}'",
             );
         }
-        if current_event != self.events_to_validate[*index_mutex_guard] {
+        let index = *index_mutex_guard;
+        let expected = &self.events_to_validate[index];
+        if current_event != *expected {
             panic!(
-                "Non-Determinism detected: Validation failed for event {}: Expected '{}', but got '{}'",
-                *index_mutex_guard, self.events_to_validate[*index_mutex_guard], current_event
+                "Non-Determinism detected: Validation failed for event {index}: Expected '{expected:?}', but got '{current_event:?}'",
             );
         }
         *index_mutex_guard += 1;

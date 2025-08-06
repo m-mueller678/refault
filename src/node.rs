@@ -1,5 +1,5 @@
 use crate::context::with_context;
-use crate::event::record_event;
+use crate::event::{Event, record_event};
 use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
 use std::cell::RefCell;
@@ -73,7 +73,7 @@ impl Node {
         &self,
         future: impl Future<Output = T> + 'static + Send + Sync,
     ) -> TaskTrackingFuture<T> {
-        record_event(Box::new(NodeSpawnedEvent { node_id: self.id }));
+        record_event(Event::NodeSpawnedEvent { node_id: self.id });
 
         let state = Arc::new(Mutex::new(crate::executor::TaskTrackingFutureState::new()));
         let observing_future = ObservingFuture {

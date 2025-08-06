@@ -1,4 +1,5 @@
 use crate::context::{Context, with_context};
+use crate::event::Event;
 #[cfg(feature = "log_events")]
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, Task};
@@ -43,7 +44,7 @@ impl Runtime {
     pub fn record_events(
         &self,
         future: impl Future<Output = ()> + Send + Sync + 'static,
-    ) -> Vec<String> {
+    ) -> Vec<Event> {
         #[cfg(not(feature = "log_events"))]
         panic!(
             "Cannot validate events when event logging is disabled. Please enable the 'log_events' feature."
@@ -67,7 +68,7 @@ impl Runtime {
     pub fn validate(
         &self,
         future: impl Future<Output = ()> + Send + Sync + 'static,
-        events: Vec<String>,
+        events: Vec<Event>,
     ) {
         #[cfg(not(feature = "log_events"))]
         panic!(
@@ -114,10 +115,6 @@ impl Runtime {
             }
 
             let events = self.record_events(future_producer());
-
-            #[cfg(not(feature = "print_events"))]
-            println!("Recorded {} events: {:?}", events.len(), events);
-
             for _ in 1..iterations {
                 self.validate(future_producer(), events.clone());
             }

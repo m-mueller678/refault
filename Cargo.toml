@@ -16,6 +16,7 @@ rand = {version="0.9"}
 getrandom = "0.3.3"
 
 [features]
+default = ["log_events"]
 log_events = []
 print_events = ["log_events"]
 

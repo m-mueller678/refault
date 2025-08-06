@@ -1,5 +1,5 @@
 use crate::context::{Context, with_context};
-use crate::event::record_event;
+use crate::event::{Event, record_event};
 use crate::node::{NodeAwareFuture, current_node};
 use crate::time::TimeScheduler;
 use std::fmt::Display;
@@ -38,7 +38,7 @@ impl Executor {
                 .spawn(move || {
                     while let Some(task) = self.next_queue_item() {
                         task.poll();
-                        record_event(FuturePolledEvent::new());
+                        record_event(Event::FuturePolledEvent);
 
                         if self.queue.lock().unwrap().is_empty() {
                             self.time_scheduler
@@ -107,7 +107,7 @@ impl Wake for NotifyingWaker {
 pub fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + Sync + 'static,
 ) -> TaskTrackingFuture<T> {
-    record_event(TaskSpawnedEvent::new());
+    record_event(Event::TaskSpawnedEvent);
 
     let state = Arc::new(Mutex::new(TaskTrackingFutureState::new()));
     let observing_future = ObservingFuture {
@@ -196,34 +196,5 @@ impl<T> Future for ObservingFuture<T> {
             }
             _ => Pending,
         }
-    }
-}
-
-// TODO make event enum
-struct TaskSpawnedEvent {}
-
-impl TaskSpawnedEvent {
-    fn new() -> Box<Self> {
-        Box::new(Self {})
-    }
-}
-
-impl Display for TaskSpawnedEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", String::from("TaskSpawnedEvent{}"))
-    }
-}
-
-struct FuturePolledEvent {}
-
-impl FuturePolledEvent {
-    fn new() -> Box<Self> {
-        Box::new(Self {})
-    }
-}
-
-impl Display for FuturePolledEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", String::from("FuturePolledEvent{}"))
     }
 }
