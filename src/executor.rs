@@ -1,4 +1,4 @@
-use crate::context::{CONTEXT, Context};
+use crate::context::{Context, with_context};
 use crate::event::record_event;
 use crate::node::{NodeAwareFuture, current_node};
 use crate::time::TimeScheduler;
@@ -101,9 +101,10 @@ impl NotifyingWaker {
 
 impl Wake for NotifyingWaker {
     fn wake(self: Arc<Self>) {
-        let mut context = CONTEXT.lock().unwrap();
-        let context: &mut Context = context.as_mut().unwrap();
-        context.executor.queue(self.task.clone());
+        with_context(|context| {
+            let context: &mut Context = context.as_mut().unwrap();
+            context.executor.queue(self.task.clone());
+        });
     }
 }
 
@@ -126,10 +127,7 @@ pub fn spawn<T: Send + 'static>(
         }),
         None => Task::new(observing_future),
     });
-    let mut context = CONTEXT.lock().unwrap();
-    let context: &mut Context = context.as_mut().unwrap();
-    context.executor.queue(task);
-
+    with_context(|cx| cx.as_mut().unwrap().executor.queue(task));
     TaskTrackingFuture { inner: state }
 }
 

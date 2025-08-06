@@ -7,8 +7,12 @@ use rand_chacha::ChaCha12Rng;
 use std::sync::{Arc, Mutex};
 
 //TODO make private, add accessor
-pub static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
+static CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
 
+pub(crate) fn with_context<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
+    let mut context = CONTEXT.lock().unwrap();
+    f(&mut *context)
+}
 pub struct Context {
     pub(crate) executor: Arc<Executor>,
     pub(crate) node_id_supplier: NodeIdSupplier,

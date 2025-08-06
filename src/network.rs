@@ -1,4 +1,4 @@
-use crate::context::CONTEXT;
+use crate::context::with_context;
 use crate::executor::spawn;
 use crate::node::{Node, NodeId, current_node, get_node};
 use crate::time::sleep;
@@ -18,10 +18,7 @@ pub fn send(message: String, target: NodeId) {
         source: current_node,
         destination: target,
     };
-    let network = {
-        let mut context = CONTEXT.lock().unwrap();
-        context.as_mut().unwrap().network.clone()
-    };
+    let network = with_context(|context| context.as_ref().unwrap().network.clone());
     network.transmit_message(package);
 }
 

@@ -1,4 +1,4 @@
-use crate::context::{CONTEXT, Context};
+use crate::context::with_context;
 use crate::event::record_event;
 use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
 use crate::network::NetworkPackage;
@@ -53,19 +53,20 @@ pub struct Node {
 
 impl Node {
     pub fn new() -> Node {
-        let mut context = CONTEXT.lock().unwrap();
-        let id = context.as_mut().unwrap().node_id_supplier.generate_id() as NodeId;
-        let new_node = Node {
-            id,
-            incoming_messages: Arc::new(Mutex::new(vec![])),
-            new_message_waker: Arc::new(Mutex::new(None)),
-        };
+        with_context(|context| {
+            let id = context.as_mut().unwrap().node_id_supplier.generate_id() as NodeId;
+            let new_node = Node {
+                id,
+                incoming_messages: Arc::new(Mutex::new(vec![])),
+                new_message_waker: Arc::new(Mutex::new(None)),
+            };
 
-        NODES.with(|nodes| {
-            nodes.borrow_mut().push(new_node.clone());
-        });
+            NODES.with(|nodes| {
+                nodes.borrow_mut().push(new_node.clone());
+            });
 
-        new_node
+            new_node
+        })
     }
 
     pub fn spawn<T: Send + 'static>(
@@ -84,10 +85,7 @@ impl Node {
             id: self.id,
             inner: Mutex::new(Box::pin(observing_future)),
         }));
-        let mut mutex_guard = CONTEXT.lock().unwrap();
-        let context: &mut Context = mutex_guard.as_mut().unwrap();
-        context.executor.queue(task);
-
+        with_context(|context| context.as_mut().unwrap().executor.queue(task));
         TaskTrackingFuture { inner: state }
     }
 
@@ -127,26 +125,27 @@ impl Future for NodeAwareFuture {
 }
 
 pub fn current_node() -> Option<NodeId> {
-    let guard = CONTEXT.lock().unwrap();
-    guard.as_ref()?.current_node
+    with_context(|context| context.as_ref()?.current_node)
 }
 
 fn set_node(id: NodeId) {
-    let mut guard = CONTEXT.lock().unwrap();
-    let context = guard.as_mut().unwrap();
-    if context.current_node == Some(id) {
-        panic!("Node already set!");
-    }
-    context.current_node = Some(id);
+    with_context(|context| {
+        let context = context.as_mut().unwrap();
+        if context.current_node.is_some() {
+            panic!("Node already set!");
+        }
+        context.current_node = Some(id);
+    })
 }
 
 fn clear_node() {
-    let mut guard = CONTEXT.lock().unwrap();
-    let context = guard.as_mut().unwrap();
-    if context.current_node == None {
-        panic!("Node not set!");
-    }
-    context.current_node = None;
+    with_context(|context| {
+        let context = context.as_mut().unwrap();
+        if context.current_node.is_some() {
+            panic!("Node not set!");
+        }
+        context.current_node = None;
+    })
 }
 
 pub(crate) fn reset_nodes() {

@@ -1,4 +1,4 @@
-use crate::context::{CONTEXT, Context};
+use crate::context::{Context, with_context};
 #[cfg(feature = "log_events")]
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, Task};
@@ -140,26 +140,27 @@ impl Runtime {
 
     #[allow(unused_variables)] // In case event logging is disabled, 'options' is not actually required
     fn initialize_context(&self, executor: Arc<Executor>, options: ExecutionOptions) {
-        let mut context_option = CONTEXT.lock().unwrap();
-        match *context_option {
-            Some(_) => panic!("Cannot create new context: Context already exists."),
-            None => {
-                *context_option = Some(Context {
-                    executor: executor.clone(),
-                    node_id_supplier: NodeIdSupplier::new(),
-                    current_node: None,
-                    network: self.network.clone(),
-                    #[cfg(feature = "log_events")]
-                    event_handler: options.event_handler,
-                    random_generator: ChaCha12Rng::seed_from_u64(self.seed),
-                    simulation_start_time: self.simulation_start_time,
-                });
+        with_context(|context_option| {
+            if context_option.is_some() {
+                panic!("Cannot create new context: Context already exists.");
             }
-        }
+            *context_option = Some(Context {
+                executor: executor.clone(),
+                node_id_supplier: NodeIdSupplier::new(),
+                current_node: None,
+                network: self.network.clone(),
+                #[cfg(feature = "log_events")]
+                event_handler: options.event_handler,
+                random_generator: ChaCha12Rng::seed_from_u64(self.seed),
+                simulation_start_time: self.simulation_start_time,
+            });
+        })
     }
 
     fn reset() {
-        *CONTEXT.lock().unwrap() = None;
+        with_context(|cx| {
+            *cx = None;
+        });
         reset_nodes();
     }
 }

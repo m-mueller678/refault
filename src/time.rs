@@ -1,4 +1,4 @@
-use crate::context::CONTEXT;
+use crate::context::{self, with_context};
 use crate::event::record_event;
 use std::fmt::Display;
 use std::future::Future;
@@ -37,14 +37,16 @@ impl TimeFuture {
             completed: false,
             waker: None,
         }));
-        let mut context = CONTEXT.lock().unwrap();
-        let context = context.as_mut().unwrap();
-        context
-            .executor
-            .time_scheduler
-            .lock()
-            .unwrap()
-            .schedule_future(state.clone(), duration);
+        with_context(|context| {
+            context
+                .as_mut()
+                .unwrap()
+                .executor
+                .time_scheduler
+                .lock()
+                .unwrap()
+                .schedule_future(state.clone(), duration);
+        });
         Self { state }
     }
 }
