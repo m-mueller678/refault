@@ -2,6 +2,7 @@ use crate::context::with_context;
 use crate::executor::spawn;
 use crate::node::{Node, NodeId, current_node, get_node};
 use crate::time::sleep;
+use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -11,7 +12,7 @@ pub fn listen() -> NetworkListenFuture {
     NetworkListenFuture::new()
 }
 
-pub fn send(message: String, target: NodeId) {
+pub fn send(message: Box<dyn Any + Send + Sync + 'static>, target: NodeId) {
     let current_node = current_node().expect("Cannot send network message from outside a node!");
     let package = NetworkPackage {
         message,
@@ -55,7 +56,7 @@ impl Future for NetworkListenFuture {
 pub struct NetworkPackage {
     pub source: NodeId,
     pub destination: NodeId,
-    pub message: String,
+    pub message: Box<dyn Any + Send + Sync + 'static>,
 }
 
 pub trait Network {

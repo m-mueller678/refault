@@ -33,15 +33,16 @@ fn main() {
         receiver_node.spawn(async {
             loop {
                 let package = listen().await;
-                println!("Receiver node received: '{}'", package.message);
+                let message = package.message.downcast::<String>().unwrap();
+                println!("Receiver node received: '{message}'");
             }
         });
 
         Node::new()
             .spawn(async move {
-                send(String::from("message 1"), receiver_node_id);
+                send(Box::new(String::from("message 1")), receiver_node_id);
                 sleep(Duration::from_millis(500)).await;
-                send(String::from("message 2"), receiver_node_id);
+                send(Box::new(String::from("message 2")), receiver_node_id);
             })
             .await;
     });
