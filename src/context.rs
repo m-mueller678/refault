@@ -8,25 +8,31 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::Poll;
 use std::time::Duration;
-thread_local! {
 
-static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
+thread_local! {
+    static CONTEXT: Context2 = const {Context2{
+        context:RefCell::new(None),
+        ready_queue:RefCell::new(VecDeque::new()),
+    }};
 }
 
 pub fn with_context_option<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
-    CONTEXT.with(|c| f(&mut c.borrow_mut()))
+    CONTEXT.with(|c| f(&mut c.context.borrow_mut()))
 }
 pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
     with_context_option(|cx| f(cx.as_mut().expect("no context set")))
 }
 pub struct Context {
     pub current_node: Option<NodeId>,
-    pub ready_queue: VecDeque<Runnable>,
     pub event_handler: Box<dyn EventHandler>,
     pub random_generator: ChaCha12Rng,
     pub nodes: Vec<Node>,
     pub time_scheduler: Option<TimeScheduler>,
     pub time: Duration,
+}
+struct Context2 {
+    context: RefCell<Option<Context>>,
+    ready_queue: RefCell<VecDeque<Runnable>>,
 }
 #[derive(Eq, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
@@ -34,11 +40,14 @@ pub struct Node {}
 
 impl Context {
     pub fn run(self) -> Self {
-        with_context_option(|c| assert!(c.replace(self).is_none()));
+        CONTEXT.with(|cx| {
+            assert!(cx.context.borrow_mut().replace(self).is_none());
+            assert!(cx.ready_queue.borrow_mut().is_empty());
+        });
         let time_scheduler = TimeScheduler::new();
         with_context(|cx| cx.time_scheduler = Some(time_scheduler));
         loop {
-            while let Some(runnable) = with_context(|cx| cx.ready_queue.pop_front()) {
+            while let Some(runnable) = CONTEXT.with(|cx| cx.ready_queue.borrow_mut().pop_front()) {
                 record_event(Event::FuturePolledEvent);
                 runnable.run();
             }
@@ -51,8 +60,10 @@ impl Context {
                 break;
             }
         }
-        let context = with_context_option(|c| c.take().unwrap());
-        context
+        CONTEXT.with(|cx| {
+            debug_assert!(cx.ready_queue.borrow_mut().is_empty());
+            cx.context.borrow_mut().take().unwrap()
+        })
     }
     pub fn new_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
@@ -71,13 +82,11 @@ impl Context {
             inner: future,
         };
         let (runnable, task) = async_task::spawn_local(fut, Self::schedule);
-        self.ready_queue.push_back(runnable);
+        Self::schedule(runnable);
         task
     }
     fn schedule(f: Runnable) {
-        with_context(|cx| {
-            cx.ready_queue.push_back(f);
-        })
+        CONTEXT.with(|cx| cx.ready_queue.borrow_mut().push_back(f));
     }
 }
 

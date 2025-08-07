@@ -3,7 +3,6 @@ use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -89,7 +88,6 @@ impl Runtime {
             random_generator: ChaCha12Rng::seed_from_u64(self.seed),
             time: self.simulation_start_time,
             nodes: Vec::new(),
-            ready_queue: VecDeque::new(),
             time_scheduler: None,
         }
     }
