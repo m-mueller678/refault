@@ -1,18 +1,16 @@
-use crate::context::{Context, run_with_context};
+use crate::context::Context;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-use crate::executor::{Executor, Task};
-use crate::network::{DefaultNetwork, Network};
-use crate::node::NodeIdSupplier;
+use crate::time::TimeScheduler;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
 
 pub struct Runtime {
     seed: u64,
     simulation_start_time: u64,
-    network: Arc<dyn Network + Send + Sync + 'static>,
     fast_forward_time: bool,
 }
 
@@ -21,17 +19,12 @@ impl Default for Runtime {
         Self {
             seed: 0,
             simulation_start_time: 1750363615882u64,
-            network: Arc::new(DefaultNetwork {}),
             fast_forward_time: true,
         }
     }
 }
 
 impl Runtime {
-    pub fn with_network(mut self, net: Arc<dyn Network + Send + 'static + Sync>) -> Self {
-        self.network = net;
-        self
-    }
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
@@ -75,14 +68,9 @@ impl Runtime {
         thread::scope(|scope| {
             scope
                 .spawn(move || {
-                    let executor = Arc::new(Executor::new(self.fast_forward_time));
-                    executor.queue(Arc::new(Task::new(future)));
-                    let ((), context) = run_with_context(
-                        self.make_context(executor.clone(), event_handler),
-                        || {
-                            executor.run();
-                        },
-                    );
+                    let mut context = self.make_context(event_handler);
+                    context.spawn(None, future);
+                    let context = context.run();
                     context.event_handler.finalize()
                 })
                 .join()
@@ -90,20 +78,15 @@ impl Runtime {
         })
     }
 
-    fn make_context(
-        &self,
-        executor: Arc<Executor>,
-        event_handler: Box<dyn EventHandler>,
-    ) -> Context {
+    fn make_context(&self, event_handler: Box<dyn EventHandler>) -> Context {
         Context {
-            executor: executor.clone(),
-            node_id_supplier: NodeIdSupplier::new(),
             current_node: None,
-            network: self.network.clone(),
             event_handler,
             random_generator: ChaCha12Rng::seed_from_u64(self.seed),
             simulation_start_time: self.simulation_start_time,
             nodes: Vec::new(),
+            ready_queue: VecDeque::new(),
+            time_scheduler: TimeScheduler::new(self.fast_forward_time),
         }
     }
 }

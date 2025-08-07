@@ -1,15 +1,13 @@
-use crate::event::{Event, record_event};
-use crate::executor::{ObservingFuture, Task, TaskTrackingFuture};
-use crate::network::NetworkPackage;
-use futures::task::AtomicWaker;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Poll, Waker};
 
-use crate::event::EventHandler;
-use crate::executor::Executor;
-use crate::network::Network;
+use crate::event::{Event, EventHandler, record_event};
+use crate::time::TimeScheduler;
+use async_task::{Runnable, Task};
+use futures_channel::oneshot;
 use rand_chacha::ChaCha12Rng;
 use std::cell::RefCell;
 thread_local! {
@@ -23,42 +21,42 @@ pub fn with_context_option<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
 pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
     with_context_option(|cx| f(cx.as_mut().expect("no context set")))
 }
-pub fn run_with_context<R>(context: Context, f: impl FnOnce() -> R) -> (R, Context) {
-    with_context_option(|c| assert!(c.replace(context).is_none()));
-    let r = f();
-    let context = with_context_option(|c| c.take().unwrap());
-    (r, context)
-}
 pub struct Context {
-    pub executor: Arc<Executor>,
     pub current_node: Option<NodeId>,
+    pub ready_queue: VecDeque<Runnable>,
     pub event_handler: Box<dyn EventHandler>,
     pub random_generator: ChaCha12Rng,
     pub simulation_start_time: u64,
-    pub network: Arc<dyn Network + Send + Sync>,
     pub nodes: Vec<Node>,
+    pub time_scheduler: TimeScheduler,
 }
 #[derive(Eq, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
 pub struct Node {
     pub id: NodeId,
-    pub has_listener: bool,
-    pub incoming_messages: Vec<NetworkPackage>,
-    pub new_message_waker: AtomicWaker,
 }
 
 impl Context {
+    pub fn run(self) -> Self {
+        with_context_option(|c| assert!(c.replace(self).is_none()));
+        loop {
+            while let Some(runnable) = with_context(|cx| cx.ready_queue.pop_front()) {
+                record_event(Event::FuturePolledEvent);
+                runnable.run();
+            }
+            if !with_context(|cx| cx.time_scheduler.wait_until_next_future_ready()) {
+                break;
+            }
+        }
+        let context = with_context_option(|c| c.take().unwrap());
+        context
+    }
     pub fn get_node(&mut self, i: NodeId) -> &mut Node {
         &mut self.nodes[i.0]
     }
     pub fn new_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
-        self.nodes.push(Node {
-            id,
-            has_listener: false,
-            incoming_messages: Default::default(),
-            new_message_waker: AtomicWaker::new(),
-        });
+        self.nodes.push(Node { id });
         id
     }
     pub fn current_node(&mut self) -> Option<NodeId> {
@@ -68,49 +66,43 @@ impl Context {
         assert!(self.current_node.is_none() ^ id.is_none());
         self.current_node = id;
     }
-}
-impl Node {
-    pub fn spawn<T: Send + 'static>(
-        &self,
-        future: impl Future<Output = T> + 'static + Send + Sync,
-    ) -> TaskTrackingFuture<T> {
-        record_event(Event::NodeSpawnedEvent { node_id: self.id });
-
-        let state = Arc::new(Mutex::new(crate::executor::TaskTrackingFutureState::new()));
-        let observing_future = ObservingFuture {
-            state: state.clone(),
-            inner: Mutex::new(Box::pin(future)),
+    pub fn spawn<F: Future + 'static>(
+        &mut self,
+        node: Option<NodeId>,
+        future: F,
+    ) -> Task<F::Output> {
+        self.event_handler.handle_event(Event::TaskSpawnedEvent);
+        let fut = NodeFuture {
+            id: self.current_node(),
+            inner: future,
         };
-
-        let task = Arc::new(Task::new(NodeAwareFuture {
-            id: self.id,
-            inner: Mutex::new(Box::pin(observing_future)),
-        }));
-        with_context(|context| context.executor.queue(task));
-        TaskTrackingFuture { inner: state }
+        let (runnable, task) = async_task::spawn_local(fut, Self::schedule);
+        self.ready_queue.push_back(runnable);
+        task
     }
-
-    pub fn receive_message(&self, message: NetworkPackage) {
-        self.incoming_messages.lock().unwrap().push(message);
-        let mut waker_option = self.new_message_waker.lock().unwrap();
-        if let Some(waker) = waker_option.take() {
-            waker.wake();
-        }
+    fn schedule(f: Runnable) {
+        with_context(|cx| {
+            cx.ready_queue.push_back(f);
+        })
     }
 }
 
-pub(crate) struct NodeAwareFuture<F> {
-    pub id: NodeId,
-    pub inner: F,
+pin_project_lite::pin_project! {
+    pub(crate) struct NodeFuture<F:Future> {
+        id: Option<NodeId>,
+        #[pin]
+        inner: F,
+    }
 }
 
-impl<F: Future> Future for NodeAwareFuture<F> {
+impl<F: Future> Future for NodeFuture<F> {
     type Output = F::Output;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        with_context(|cx| cx.set_node(Some(self.id)));
-        let result = self.inner.poll(cx);
-        with_context(|cx| cx.set_node(None));
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<F::Output> {
+        with_context(|cx| cx.set_current_node(self.id));
+        let this = self.project();
+        let result = this.inner.poll(cx);
+        with_context(|cx| cx.set_current_node(None));
         result
     }
 }

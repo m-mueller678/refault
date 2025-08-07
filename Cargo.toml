@@ -11,6 +11,9 @@ rand_chacha="0.9"
 agnostik = "0.2"
 borrow_channel="0.4"
 futures="0.3.31"
+pin-project-lite = "0.2.16"
+futures-channel = "0.3"
+async-task="4.7.1"
 
 [dev-dependencies]
 chrono = "0.4.41"

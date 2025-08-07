@@ -38,10 +38,7 @@ impl TimeFuture {
         }));
         with_context(|context| {
             context
-                .executor
                 .time_scheduler
-                .lock()
-                .unwrap()
                 .schedule_future(state.clone(), duration);
         });
         Self { state }
@@ -86,9 +83,9 @@ impl TimeScheduler {
             .push((self.elapsed_time.add(duration), future_state));
     }
 
-    pub(crate) fn wait_until_next_future_ready(&mut self) {
+    pub(crate) fn wait_until_next_future_ready(&mut self) -> bool {
         if self.upcoming_events.is_empty() {
-            return;
+            return false;
         }
 
         self.upcoming_events.sort_by(|first, second| {
@@ -113,6 +110,7 @@ impl TimeScheduler {
             let (_, future) = self.upcoming_events.remove(0);
             future.lock().unwrap().complete();
         }
+        true
     }
 
     pub(crate) fn elapsed(&self) -> Duration {

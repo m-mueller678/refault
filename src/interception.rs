@@ -35,7 +35,7 @@ unsafe extern "C" fn clock_gettime(
     with_context_option(|context| {
         if let Some(context) = context {
             unsafe {
-                let execution_duration = context.executor.time_scheduler.lock().unwrap().elapsed();
+                let execution_duration = context.time_scheduler.elapsed();
 
                 let result_duration =
                     execution_duration + Duration::from_millis(context.simulation_start_time);
