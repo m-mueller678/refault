@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 pub enum Event {
     FuturePolledEvent,
     TimeAdvancedEvent(Duration),
-    NodeSpawnedEvent { node_id: NodeId },
+    NodeSpawnedEvent(NodeId),
     TaskSpawnedEvent,
 }
 

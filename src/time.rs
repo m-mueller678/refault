@@ -89,6 +89,7 @@ impl TimeScheduler {
         }
 
         self.upcoming_events.sort_by(|first, second| {
+            //TODO use heap
             let (time1, _) = first;
             let (time2, _) = second;
             time1.cmp(time2)

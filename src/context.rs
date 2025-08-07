@@ -1,15 +1,12 @@
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Poll, Waker};
-
 use crate::event::{Event, EventHandler, record_event};
 use crate::time::TimeScheduler;
 use async_task::{Runnable, Task};
-use futures_channel::oneshot;
 use rand_chacha::ChaCha12Rng;
 use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Poll;
 thread_local! {
 
 static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
@@ -32,9 +29,7 @@ pub struct Context {
 }
 #[derive(Eq, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
-pub struct Node {
-    pub id: NodeId,
-}
+pub struct Node {}
 
 impl Context {
     pub fn run(self) -> Self {
@@ -51,12 +46,10 @@ impl Context {
         let context = with_context_option(|c| c.take().unwrap());
         context
     }
-    pub fn get_node(&mut self, i: NodeId) -> &mut Node {
-        &mut self.nodes[i.0]
-    }
     pub fn new_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
-        self.nodes.push(Node { id });
+        self.event_handler.handle_event(Event::NodeSpawnedEvent(id));
+        self.nodes.push(Node {});
         id
     }
     pub fn current_node(&mut self) -> Option<NodeId> {
@@ -73,7 +66,7 @@ impl Context {
     ) -> Task<F::Output> {
         self.event_handler.handle_event(Event::TaskSpawnedEvent);
         let fut = NodeFuture {
-            id: self.current_node(),
+            id: node,
             inner: future,
         };
         let (runnable, task) = async_task::spawn_local(fut, Self::schedule);

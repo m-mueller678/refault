@@ -1,4 +1,4 @@
-use crate::context::Context;
+use crate::context::{Context, NodeId, with_context, with_context_option};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::time::TimeScheduler;
@@ -29,10 +29,12 @@ impl Runtime {
         self.seed = seed;
         self
     }
+
     pub fn with_simulation_start_time(mut self, simulation_start_time: u64) -> Self {
         self.simulation_start_time = simulation_start_time;
         self
     }
+
     pub fn with_fast_forward_time(mut self, fast_forward_time: bool) -> Self {
         self.fast_forward_time = fast_forward_time;
         self
@@ -69,8 +71,10 @@ impl Runtime {
             scope
                 .spawn(move || {
                     let mut context = self.make_context(event_handler);
-                    context.spawn(None, future);
+                    let task = context.spawn(None, future);
                     let context = context.run();
+                    assert!(task.is_finished());
+                    drop(task);
                     context.event_handler.finalize()
                 })
                 .join()
@@ -89,4 +93,16 @@ impl Runtime {
             time_scheduler: TimeScheduler::new(self.fast_forward_time),
         }
     }
+}
+
+pub fn current_node() -> Option<NodeId> {
+    with_context(|cx| cx.current_node())
+}
+
+pub fn create_node() -> NodeId {
+    with_context(|cx| cx.new_node())
+}
+
+pub fn is_running() -> bool {
+    with_context_option(|cx| cx.is_some())
 }
