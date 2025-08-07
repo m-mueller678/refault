@@ -96,7 +96,7 @@ impl Runtime {
 }
 
 pub fn current_node() -> Option<NodeId> {
-    with_context(|cx| cx.current_node())
+    with_context(|cx| cx.current_node)
 }
 
 pub fn create_node() -> NodeId {

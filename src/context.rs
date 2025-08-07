@@ -52,13 +52,6 @@ impl Context {
         self.nodes.push(Node {});
         id
     }
-    pub fn current_node(&mut self) -> Option<NodeId> {
-        self.current_node
-    }
-    fn set_current_node(&mut self, id: Option<NodeId>) {
-        assert!(self.current_node.is_none() ^ id.is_none());
-        self.current_node = id;
-    }
     pub fn spawn<F: Future + 'static>(
         &mut self,
         node: Option<NodeId>,
@@ -92,10 +85,16 @@ impl<F: Future> Future for NodeFuture<F> {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<F::Output> {
-        with_context(|cx| cx.set_current_node(self.id));
         let this = self.project();
+        with_context(|cx| {
+            assert!(cx.current_node.is_none());
+            cx.current_node = *this.id;
+        });
         let result = this.inner.poll(cx);
-        with_context(|cx| cx.set_current_node(None));
+        with_context(|cx| {
+            debug_assert_eq!(cx.current_node, *this.id);
+            cx.current_node = None;
+        });
         result
     }
 }
