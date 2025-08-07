@@ -1,6 +1,5 @@
 use crate::context::with_context;
 use crate::executor::spawn;
-use crate::node::{Node, NodeId, current_node, get_node};
 use crate::time::sleep;
 use std::any::Any;
 use std::future::Future;
@@ -9,9 +8,24 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 pub fn listen() -> NetworkListenFuture {
-    NetworkListenFuture::new()
+    with_context(|cx| {
+        let node_id = cx.current_node;
+        let node = cx.get_node(node_id);
+        assert!(!node.has_listener)
+    });
+    node.has_listener = true;
+    NetworkListenFuture(node_id)
 }
 
+impl Drop for NetworkListenFuture {
+    fn drop(&mut self) {
+        with_context(|cx| {
+            let node = cx.get_node(self.0);
+            node.has_listener = false;
+            node.new_message_waker.clone_from(Waker::noop());
+        })
+    }
+}
 pub fn send(message: Box<dyn Any + Send + Sync + 'static>, target: NodeId) {
     let current_node = current_node().expect("Cannot send network message from outside a node!");
     let package = NetworkPackage {
@@ -23,27 +37,12 @@ pub fn send(message: Box<dyn Any + Send + Sync + 'static>, target: NodeId) {
     network.transmit_message(package);
 }
 
-pub struct NetworkListenFuture {
-    node: Node,
-}
-
-impl NetworkListenFuture {
-    fn new() -> Self {
-        let node = get_node(&current_node().unwrap());
-        NetworkListenFuture { node }
-    }
-}
+pub struct NetworkListenFuture(NodeId);
 
 impl Future for NetworkListenFuture {
     type Output = NetworkPackage;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut node_waker = self.node.new_message_waker.lock().unwrap();
-        if node_waker.is_some() {
-            // TODO check this at future creation
-            panic!("There already is another listener on this node.");
-        }
-
         let mut messages = self.node.incoming_messages.lock().unwrap();
         if messages.is_empty() {
             *node_waker = Some(cx.waker().clone());
