@@ -40,29 +40,29 @@ impl Runtime {
         self
     }
 
-    pub fn run(&self, f: impl 'static + Send + Sync + Future<Output = ()>) {
+    pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send) {
         self.run_simulation(f, Box::new(NoopEventHandler));
     }
 
-    pub fn check_determinism<T: Future<Output = ()> + Send + Sync + 'static>(
+    pub fn check_determinism<F: Future<Output = ()> + 'static>(
         &self,
-        mut future_producer: impl FnMut() -> T,
+        mut future_producer: impl FnMut() -> F + Send,
         iterations: usize,
     ) {
         assert!(iterations > 1);
         let event_handler = RecordingEventHandler::new();
-        let events = Arc::new(self.run_simulation(future_producer(), Box::new(event_handler)));
+        let events = Arc::new(self.run_simulation(&mut future_producer, Box::new(event_handler)));
         for _ in 1..iterations {
             self.run_simulation(
-                future_producer(),
+                &mut future_producer,
                 Box::new(ValidatingEventHandler::new(events.clone())),
             );
         }
     }
 
-    fn run_simulation(
+    fn run_simulation<F: Future<Output = ()> + 'static>(
         &self,
-        future: impl Future<Output = ()> + Send + Sync + 'static,
+        future: impl FnOnce() -> F + Send,
         event_handler: Box<dyn EventHandler>,
     ) -> Vec<Event> {
         // Run the simulation on a new thread to avoid thread local state on this thread interfering
@@ -71,7 +71,7 @@ impl Runtime {
             scope
                 .spawn(move || {
                     let mut context = self.make_context(event_handler);
-                    let task = context.spawn(None, future);
+                    let task = context.spawn(None, future());
                     let context = context.run();
                     assert!(task.is_finished());
                     drop(task);
