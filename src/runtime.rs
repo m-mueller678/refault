@@ -1,16 +1,16 @@
 use crate::context::{Context, NodeId, with_context, with_context_option};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-use crate::time::TimeScheduler;
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub struct Runtime {
     seed: u64,
-    simulation_start_time: u64,
+    simulation_start_time: Duration,
     fast_forward_time: bool,
 }
 
@@ -18,7 +18,7 @@ impl Default for Runtime {
     fn default() -> Self {
         Self {
             seed: 0,
-            simulation_start_time: 1750363615882u64,
+            simulation_start_time: Duration::from_secs(1648339195),
             fast_forward_time: true,
         }
     }
@@ -30,8 +30,8 @@ impl Runtime {
         self
     }
 
-    pub fn with_simulation_start_time(mut self, simulation_start_time: u64) -> Self {
-        self.simulation_start_time = simulation_start_time;
+    pub fn with_simulation_start_time(mut self, simulation_start_time: SystemTime) -> Self {
+        self.simulation_start_time = simulation_start_time.duration_since(UNIX_EPOCH).unwrap();
         self
     }
 
@@ -87,10 +87,10 @@ impl Runtime {
             current_node: None,
             event_handler,
             random_generator: ChaCha12Rng::seed_from_u64(self.seed),
-            simulation_start_time: self.simulation_start_time,
+            time: self.simulation_start_time,
             nodes: Vec::new(),
             ready_queue: VecDeque::new(),
-            time_scheduler: TimeScheduler::new(self.fast_forward_time),
+            time_scheduler: None,
         }
     }
 }

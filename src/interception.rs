@@ -1,6 +1,5 @@
 use crate::context::with_context_option;
 use rand::RngCore;
-use std::time::Duration;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isize {
@@ -35,13 +34,9 @@ unsafe extern "C" fn clock_gettime(
     with_context_option(|context| {
         if let Some(context) = context {
             unsafe {
-                let execution_duration = context.time_scheduler.elapsed();
-
-                let result_duration =
-                    execution_duration + Duration::from_millis(context.simulation_start_time);
                 tp.write(libc::timespec {
-                    tv_sec: result_duration.as_secs() as i64,
-                    tv_nsec: result_duration.subsec_nanos() as i64,
+                    tv_sec: context.time.as_secs() as i64,
+                    tv_nsec: context.time.subsec_nanos() as i64,
                 });
                 0
             }

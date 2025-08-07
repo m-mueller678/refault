@@ -14,6 +14,9 @@ futures="0.3.31"
 pin-project-lite = "0.2.16"
 futures-channel = "0.3"
 async-task="4.7.1"
+priority-queue = "2.0.0"
+pin-arc="0.2.1"
+ahash = "0.8"
 
 [dev-dependencies]
 chrono = "0.4.41"

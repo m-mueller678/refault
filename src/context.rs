@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::Poll;
+use std::time::Duration;
 thread_local! {
 
 static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
@@ -23,9 +24,9 @@ pub struct Context {
     pub ready_queue: VecDeque<Runnable>,
     pub event_handler: Box<dyn EventHandler>,
     pub random_generator: ChaCha12Rng,
-    pub simulation_start_time: u64,
     pub nodes: Vec<Node>,
-    pub time_scheduler: TimeScheduler,
+    pub time_scheduler: Option<TimeScheduler>,
+    pub time: Duration,
 }
 #[derive(Eq, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
@@ -34,12 +35,19 @@ pub struct Node {}
 impl Context {
     pub fn run(self) -> Self {
         with_context_option(|c| assert!(c.replace(self).is_none()));
+        let time_scheduler = TimeScheduler::new();
+        with_context(|cx| cx.time_scheduler = Some(time_scheduler));
         loop {
             while let Some(runnable) = with_context(|cx| cx.ready_queue.pop_front()) {
                 record_event(Event::FuturePolledEvent);
                 runnable.run();
             }
-            if !with_context(|cx| cx.time_scheduler.wait_until_next_future_ready()) {
+            if !with_context(|cx| {
+                cx.time_scheduler
+                    .as_mut()
+                    .unwrap()
+                    .wait_until_next_future_ready(&mut cx.time, &mut *cx.event_handler)
+            }) {
                 break;
             }
         }

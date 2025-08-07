@@ -1,120 +1,124 @@
 use crate::context::with_context;
-use crate::event::{Event, record_event};
+use crate::event::{Event, EventHandler};
+use pin_arc::{PinRc, PinRcStorage};
+use priority_queue::PriorityQueue;
+use std::cell::Cell;
 use std::future::Future;
-use std::ops::{Add, Sub};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-pub fn sleep(duration: Duration) -> TimeFuture {
-    TimeFuture::new(duration)
+pin_project_lite::pin_project! {
+    pub struct Sleep {
+        #[pin]
+        state: PinRcStorage<Cell<TimeFutureState>>,
+    }
 }
 
-pub struct TimeFuture {
-    state: Arc<Mutex<TimeFutureState>>,
+enum TimeFutureState {
+    Init(Instant),
+    Waiting(Waker),
+    Done,
 }
 
-pub(crate) struct TimeFutureState {
-    completed: bool,
-    waker: Option<Waker>,
-}
-
-impl TimeFutureState {
-    pub(crate) fn complete(&mut self) {
-        self.completed = true;
-        if let Some(waker) = self.waker.take() {
-            waker.wake();
+impl Sleep {
+    fn new(deadline: Instant) -> Self {
+        Sleep {
+            state: PinRcStorage::new(Cell::new(TimeFutureState::Init(deadline))),
         }
     }
 }
 
-impl TimeFuture {
-    fn new(duration: Duration) -> TimeFuture {
-        let state = Arc::new(Mutex::new(TimeFutureState {
-            completed: false,
-            waker: None,
-        }));
-        with_context(|context| {
-            context
-                .time_scheduler
-                .schedule_future(state.clone(), duration);
-        });
-        Self { state }
-    }
-}
-
-impl Future for TimeFuture {
+impl Future for Sleep {
     type Output = ();
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.state.lock().unwrap();
-        if state.completed {
-            Poll::Ready(())
-        } else {
-            state.waker = Some(cx.waker().clone());
-            Poll::Pending
+    fn poll(self: Pin<&mut Self>, fut_cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let state_storage = self.project().state;
+        let state = state_storage.as_ref().get_pin();
+        match state.replace(TimeFutureState::Done) {
+            TimeFutureState::Init(instant) => with_context(|cx| {
+                let time = cx.time_scheduler.as_mut().unwrap();
+                if time.now >= instant {
+                    Poll::Ready(())
+                } else {
+                    state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
+                    time.upcoming_events
+                        .push(QueueEntry(state_storage.as_ref().create_handle()), instant);
+                    Poll::Pending
+                }
+            }),
+            TimeFutureState::Waiting(mut waker) => {
+                waker.clone_from(fut_cx.waker());
+                state.set(TimeFutureState::Waiting(waker));
+                Poll::Pending
+            }
+            TimeFutureState::Done => Poll::Ready(()),
         }
     }
 }
 
 pub(crate) struct TimeScheduler {
-    upcoming_events: Vec<(Duration, Arc<Mutex<TimeFutureState>>)>,
-    elapsed_time: Duration,
-    fast_forward: bool,
+    upcoming_events: PriorityQueue<QueueEntry, Instant>,
+    now: Instant,
 }
 
+struct QueueEntry(PinRc<Cell<TimeFutureState>>);
+
+impl QueueEntry {
+    fn addr(&self) -> usize {
+        let ptr: *const Cell<TimeFutureState> = self.0.get_pin().get_ref();
+        ptr.addr()
+    }
+}
+
+impl std::hash::Hash for QueueEntry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.addr(), state)
+    }
+}
+
+impl PartialEq for QueueEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.addr() == other.addr()
+    }
+}
+
+impl Eq for QueueEntry {}
 impl TimeScheduler {
-    pub(crate) fn new(fast_forward: bool) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            upcoming_events: vec![],
-            elapsed_time: Duration::from_secs(0),
-            fast_forward,
+            upcoming_events: PriorityQueue::new(),
+            now: Instant::now(),
         }
     }
 
-    pub(crate) fn schedule_future(
+    pub(crate) fn wait_until_next_future_ready(
         &mut self,
-        future_state: Arc<Mutex<TimeFutureState>>,
-        duration: Duration,
-    ) {
-        self.upcoming_events
-            .push((self.elapsed_time.add(duration), future_state));
-    }
-
-    pub(crate) fn wait_until_next_future_ready(&mut self) -> bool {
-        if self.upcoming_events.is_empty() {
+        time: &mut Duration,
+        event_handler: &mut dyn EventHandler,
+    ) -> bool {
+        let Some(next) = self.upcoming_events.peek().map(|x| *x.1) else {
             return false;
-        }
-
-        self.upcoming_events.sort_by(|first, second| {
-            //TODO use heap
-            let (time1, _) = first;
-            let (time2, _) = second;
-            time1.cmp(time2)
-        });
-
-        let (next_event_duration, _) = self.upcoming_events[0];
-        let wait_duration = next_event_duration.sub(self.elapsed_time);
-        record_event(Event::TimeAdvancedEvent(wait_duration));
-        if !self.fast_forward {
-            thread::sleep(wait_duration);
-        }
-
-        self.elapsed_time = next_event_duration;
-
-        while !self.upcoming_events.is_empty() {
-            if self.upcoming_events[0].0 != next_event_duration {
-                break;
-            }
-            let (_, future) = self.upcoming_events.remove(0);
-            future.lock().unwrap().complete();
+        };
+        let dt = next.duration_since(self.now);
+        event_handler.handle_event(Event::TimeAdvancedEvent(dt));
+        *time += dt;
+        self.now = next;
+        while let Some(x) = self.upcoming_events.pop_if(|_, t| *t <= self.now) {
+            let TimeFutureState::Waiting(waker) = x.0.0.get_pin().replace(TimeFutureState::Done)
+            else {
+                unreachable!();
+            };
+            waker.wake();
         }
         true
     }
+}
 
-    pub(crate) fn elapsed(&self) -> Duration {
-        self.elapsed_time
-    }
+pub fn sleep_until(deadline: Instant) -> Sleep {
+    Sleep::new(deadline)
+}
+
+pub fn sleep(duration: Duration) -> Sleep {
+    Sleep::new(Instant::now() + duration)
 }
