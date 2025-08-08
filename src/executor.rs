@@ -17,9 +17,35 @@ use std::{
 
 static EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
 
+pub struct ExecutorQueue {
+    ready_queue: VecDeque<usize>,
+    id: usize,
+}
+
+impl ExecutorQueue {
+    pub fn is_empty(&self) -> bool {
+        self.ready_queue.is_empty()
+    }
+
+    pub fn new() -> Self {
+        ExecutorQueue {
+            ready_queue: VecDeque::new(),
+            id: EXECUTOR_ID.fetch_add(1, Relaxed),
+        }
+    }
+
+    pub fn executor(&self) -> Executor {
+        Executor {
+            id: self.id,
+            tasks: HashMap::new(),
+            next_task_id: 0,
+            time_scheduler: TimeScheduler::new(),
+        }
+    }
+}
+
 pub struct Executor {
     id: usize,
-    ready_queue: VecDeque<usize>,
     // each entry corresponds to one TaskShared
     // entries are None while the task is executing, cancelled, or completed
     #[allow(clippy::type_complexity)]
@@ -94,31 +120,28 @@ struct TaskShared {
 
 impl WakeRef for TaskShared {
     fn wake_by_ref(&self) {
-        self.with_exec(|ex| match self.state.load(Relaxed) {
-            TASK_CANCELLED => (),
-            TASK_READY => (),
-            TASK_WAITING => {
-                self.state.store(TASK_READY, Relaxed);
-                ex.ready_queue.push_back(self.id);
-            }
-            TASK_END.. => unreachable!(),
+        Context2::with(|cx| {
+            let mut ex = cx.queue.borrow_mut();
+            let ex = ex.as_mut().unwrap();
+            assert_eq!(ex.id, self.executor_id);
+            match self.state.load(Relaxed) {
+                TASK_CANCELLED => (),
+                TASK_READY => (),
+                TASK_WAITING => {
+                    self.state.store(TASK_READY, Relaxed);
+                    ex.ready_queue.push_back(self.id);
+                }
+                TASK_END.. => unreachable!(),
+            };
         });
     }
 }
 
 impl Drop for TaskShared {
     fn drop(&mut self) {
-        self.with_exec(|ex| {
-            ex.tasks.remove(&self.id);
-        });
-    }
-}
-
-impl TaskShared {
-    fn with_exec(&self, f: impl FnOnce(&mut Executor)) {
         with_context(|cx| {
             assert_eq!(cx.executor.id, self.executor_id);
-            f(&mut cx.executor);
+            cx.executor.tasks.remove(&self.id);
         })
     }
 }
@@ -132,30 +155,34 @@ impl Executor {
             snd: Some(snd),
             fut: future,
             shared: Arc::new(TaskShared {
-                state: AtomicUsize::new(TASK_READY),
+                state: AtomicUsize::new(TASK_WAITING),
                 id: task_id,
                 node,
                 executor_id: self.id,
             }),
         });
-        self.ready_queue.push_back(task_id);
         let task_handle = TaskHandle {
             result: rcv,
             abort: AbortHandle(task.shared.clone()),
         };
         self.tasks.insert(task_id, Cell::new(Some(task)));
+        <TaskShared as WakeRef>::wake_by_ref(&*task_handle.abort.0);
         task_handle
     }
 
     pub fn run_current_context() {
         loop {
-            while let Some(mut task) = with_context(|cx| {
-                let task = cx
-                    .executor
-                    .tasks
-                    .get_mut(&cx.executor.ready_queue.pop_front()?)
+            while let Some(mut task) = Context2::with(|cx| {
+                let task_id = cx
+                    .queue
+                    .borrow_mut()
+                    .as_mut()
                     .unwrap()
-                    .take()?;
+                    .ready_queue
+                    .pop_front()?;
+                let mut cx = cx.context.borrow_mut();
+                let cx = cx.as_mut().unwrap();
+                let task = cx.executor.tasks.get_mut(&task_id).unwrap().take()?;
                 cx.event_handler
                     .handle_event(Event::TaskRun(task.as_base().id));
                 assert!(cx.current_node == NodeId::INIT);
@@ -191,15 +218,6 @@ impl Executor {
             }) {
                 break;
             }
-        }
-    }
-    pub(crate) fn new() -> Self {
-        Self {
-            id: EXECUTOR_ID.fetch_add(1, Relaxed),
-            ready_queue: VecDeque::new(),
-            tasks: HashMap::new(),
-            next_task_id: 0,
-            time_scheduler: TimeScheduler::new(),
         }
     }
 }
