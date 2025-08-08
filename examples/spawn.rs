@@ -1,5 +1,5 @@
-use deterministic_simulation_core::runtime::{Runtime, spawn};
 use deterministic_simulation_core::time::sleep;
+use deterministic_simulation_core::{Runtime, spawn};
 use std::time::Duration;
 
 fn main() {

@@ -1,4 +1,4 @@
-use deterministic_simulation_core::{runtime::Runtime, time::sleep};
+use deterministic_simulation_core::{Runtime, time::sleep};
 use std::time::Duration;
 
 fn main() {

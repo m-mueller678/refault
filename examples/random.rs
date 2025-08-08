@@ -1,4 +1,4 @@
-use deterministic_simulation_core::runtime::Runtime;
+use deterministic_simulation_core::Runtime;
 use rand::Rng;
 
 fn main() {

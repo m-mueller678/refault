@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use deterministic_simulation_core::runtime::Runtime;
+use deterministic_simulation_core::Runtime;
 use deterministic_simulation_core::time::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

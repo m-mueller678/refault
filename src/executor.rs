@@ -22,6 +22,7 @@ pub struct Executor {
     ready_queue: VecDeque<usize>,
     // each entry corresponds to one TaskShared
     // entries are None while the task is executing, cancelled, or completed
+    #[allow(clippy::type_complexity)]
     tasks: HashMap<usize, Cell<Option<Pin<Box<dyn TaskDyn>>>>>,
     next_task_id: usize,
     pub time_scheduler: TimeScheduler,
