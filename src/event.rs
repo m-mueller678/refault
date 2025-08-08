@@ -1,4 +1,4 @@
-use crate::context::{NodeId, with_context};
+use crate::context::NodeId;
 use std::{sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -7,12 +7,6 @@ pub enum Event {
     TimeAdvancedEvent(Duration),
     NodeSpawnedEvent(NodeId),
     TaskSpawnedEvent,
-}
-
-pub fn record_event(event: Event) {
-    with_context(|context| {
-        context.event_handler.handle_event(event);
-    })
 }
 
 pub(crate) trait EventHandler: Send {

@@ -1,6 +1,7 @@
-use crate::event::{Event, EventHandler, record_event};
+use crate::event::{Event, EventHandler};
 use crate::time::TimeScheduler;
 use async_task::{Runnable, Task};
+use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -24,11 +25,11 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
 }
 pub struct Context {
     pub current_node: Option<NodeId>,
-    pub event_handler: Box<dyn EventHandler>,
+    event_handler: Box<dyn EventHandler>,
     pub random_generator: ChaCha12Rng,
-    pub nodes: Vec<Node>,
+    nodes: Vec<Node>,
     pub time_scheduler: Option<TimeScheduler>,
-    pub time: Duration,
+    time: Duration,
 }
 struct Context2 {
     context: RefCell<Option<Context>>,
@@ -39,16 +40,40 @@ pub struct NodeId(usize);
 pub struct Node {}
 
 impl Context {
-    pub fn run(self) -> Self {
+    pub fn time(&self) -> Duration {
+        self.time
+    }
+
+    pub fn run(
+        event_handler: Box<dyn EventHandler>,
+        seed: u64,
+        start_time: Duration,
+        init_fn: Box<dyn FnOnce() + '_>,
+    ) -> Box<dyn EventHandler> {
+        let context = Context {
+            current_node: None,
+            event_handler,
+            random_generator: ChaCha12Rng::seed_from_u64(seed),
+            time: start_time,
+            nodes: Vec::new(),
+            time_scheduler: None,
+        };
         CONTEXT.with(|cx| {
-            assert!(cx.context.borrow_mut().replace(self).is_none());
+            assert!(cx.context.borrow_mut().replace(context).is_none());
             assert!(cx.ready_queue.borrow_mut().is_empty());
         });
         let time_scheduler = TimeScheduler::new();
         with_context(|cx| cx.time_scheduler = Some(time_scheduler));
+        init_fn();
         loop {
-            while let Some(runnable) = CONTEXT.with(|cx| cx.ready_queue.borrow_mut().pop_front()) {
-                record_event(Event::FuturePolledEvent);
+            while let Some(runnable) = CONTEXT.with(|cx| {
+                cx.context
+                    .borrow_mut()
+                    .as_mut()
+                    .unwrap()
+                    .record_event(Event::FuturePolledEvent);
+                cx.ready_queue.borrow_mut().pop_front()
+            }) {
                 runnable.run();
             }
             if !with_context(|cx| {
@@ -60,11 +85,18 @@ impl Context {
                 break;
             }
         }
-        CONTEXT.with(|cx| {
-            debug_assert!(cx.ready_queue.borrow_mut().is_empty());
-            cx.context.borrow_mut().take().unwrap()
-        })
+        CONTEXT
+            .with(|cx| {
+                debug_assert!(cx.ready_queue.borrow_mut().is_empty());
+                cx.context.borrow_mut().take().unwrap()
+            })
+            .event_handler
     }
+
+    pub fn record_event(&mut self, event: Event) {
+        self.event_handler.handle_event(event);
+    }
+
     pub fn new_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
         self.event_handler.handle_event(Event::NodeSpawnedEvent(id));

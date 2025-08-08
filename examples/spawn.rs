@@ -1,10 +1,9 @@
-use deterministic_simulation_core::executor::spawn;
-use deterministic_simulation_core::runtime::Runtime;
+use deterministic_simulation_core::runtime::{Runtime, spawn};
 use deterministic_simulation_core::time::sleep;
 use std::time::Duration;
 
 fn main() {
-    Runtime::default().run(async {
+    Runtime::default().run(|| async {
         // Spawn multiple futures for simultaneous execution
         let future1 = spawn(calculate_async());
         let future2 = spawn(calculate_async());

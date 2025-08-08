@@ -1,8 +1,6 @@
 use crate::context::{Context, NodeId, with_context, with_context_option};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-use rand::SeedableRng;
-use rand_chacha::ChaCha12Rng;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -39,8 +37,15 @@ impl Runtime {
         self
     }
 
-    pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send) {
-        self.run_simulation(f, Box::new(NoopEventHandler));
+    pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
+        self.run_simulation(
+            Box::new(|| {
+                with_context(|cx| {
+                    cx.spawn(None, f()).detach();
+                })
+            }),
+            Box::new(NoopEventHandler),
+        );
     }
 
     pub fn check_determinism<F: Future<Output = ()> + 'static>(
@@ -50,18 +55,25 @@ impl Runtime {
     ) {
         assert!(iterations > 1);
         let event_handler = RecordingEventHandler::new();
-        let events = Arc::new(self.run_simulation(&mut future_producer, Box::new(event_handler)));
-        for _ in 1..iterations {
+        let mut run_with_events = |events| {
             self.run_simulation(
-                &mut future_producer,
-                Box::new(ValidatingEventHandler::new(events.clone())),
-            );
+                Box::new(|| {
+                    with_context(|cx| {
+                        cx.spawn(None, future_producer()).detach();
+                    })
+                }),
+                events,
+            )
+        };
+        let events = Arc::new(run_with_events(Box::new(event_handler)));
+        for _ in 1..iterations {
+            run_with_events(Box::new(ValidatingEventHandler::new(events.clone())));
         }
     }
 
-    fn run_simulation<F: Future<Output = ()> + 'static>(
+    fn run_simulation(
         &self,
-        future: impl FnOnce() -> F + Send,
+        init_fn: Box<dyn FnOnce() + Send + '_>,
         event_handler: Box<dyn EventHandler>,
     ) -> Vec<Event> {
         // Run the simulation on a new thread to avoid thread local state on this thread interfering
@@ -69,27 +81,17 @@ impl Runtime {
         thread::scope(|scope| {
             scope
                 .spawn(move || {
-                    let mut context = self.make_context(event_handler);
-                    let task = context.spawn(None, future());
-                    let context = context.run();
-                    assert!(task.is_finished());
-                    drop(task);
-                    context.event_handler.finalize()
+                    Context::run(
+                        event_handler,
+                        self.seed,
+                        self.simulation_start_time,
+                        init_fn,
+                    )
+                    .finalize()
                 })
                 .join()
                 .unwrap()
         })
-    }
-
-    fn make_context(&self, event_handler: Box<dyn EventHandler>) -> Context {
-        Context {
-            current_node: None,
-            event_handler,
-            random_generator: ChaCha12Rng::seed_from_u64(self.seed),
-            time: self.simulation_start_time,
-            nodes: Vec::new(),
-            time_scheduler: None,
-        }
     }
 }
 
@@ -104,3 +106,14 @@ pub fn create_node() -> NodeId {
 pub fn is_running() -> bool {
     with_context_option(|cx| cx.is_some())
 }
+
+/// Spawn a task on the current node
+pub fn spawn<F: Future + 'static>(future: F) -> Task<F::Output> {
+    with_context(|cx| cx.spawn(cx.current_node, future))
+}
+
+/// Spawn a task on the specified node.
+pub fn spawn_on_node<F: Future + 'static>(node: NodeId, future: F) -> Task<F::Output> {
+    with_context(|cx| cx.spawn(Some(node), future))
+}
+pub type Task<T> = async_task::Task<T>;
