@@ -1,16 +1,14 @@
-use crate::context::with_context_option;
+use crate::context::Context2;
 use rand::Rng;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isize {
-    with_context_option(|context| {
-        if let Some(context) = context {
+    Context2::with(|context| {
+        if let Some(rng) = &mut *context.rng.borrow_mut() {
             unsafe {
                 // ensure memory is initialized. Hopefully this is optimized out.
                 buf.write_bytes(0, buflen);
-                context
-                    .random_generator
-                    .fill(std::slice::from_raw_parts_mut(buf, buflen));
+                rng.fill(std::slice::from_raw_parts_mut(buf, buflen));
                 buflen as isize
             }
         } else {
@@ -33,10 +31,9 @@ unsafe extern "C" fn clock_gettime(
     _clockid: libc::clockid_t,
     tp: *mut libc::timespec,
 ) -> libc::c_int {
-    with_context_option(|context| {
-        if let Some(context) = context {
+    Context2::with(|context| {
+        if let Some(time) = context.time.get() {
             unsafe {
-                let time = context.time();
                 tp.write(libc::timespec {
                     tv_sec: time.as_secs() as i64,
                     tv_nsec: time.subsec_nanos() as i64,

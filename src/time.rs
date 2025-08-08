@@ -37,12 +37,12 @@ impl Future for Sleep {
         let state = state_storage.as_ref().get_pin();
         match state.replace(TimeFutureState::Done) {
             TimeFutureState::Init(instant) => with_context(|cx| {
-                let time = cx.time_scheduler.as_mut().unwrap();
-                if time.now >= instant {
+                if cx.time_scheduler.now >= instant {
                     Poll::Ready(())
                 } else {
                     state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
-                    time.upcoming_events
+                    cx.time_scheduler
+                        .upcoming_events
                         .push(QueueEntry(state_storage.as_ref().create_handle()), instant);
                     Poll::Pending
                 }
@@ -94,7 +94,7 @@ impl TimeScheduler {
 
     pub(crate) fn wait_until_next_future_ready(
         &mut self,
-        time: &mut Duration,
+        time: &Cell<Option<Duration>>,
         event_handler: &mut dyn EventHandler,
     ) -> bool {
         let Some(next) = self.upcoming_events.peek().map(|x| *x.1) else {
@@ -102,7 +102,7 @@ impl TimeScheduler {
         };
         let dt = next.duration_since(self.now);
         event_handler.handle_event(Event::TimeAdvanced(dt));
-        *time += dt;
+        time.set(Some(time.get().unwrap() + dt));
         self.now = next;
         while let Some(x) = self.upcoming_events.pop_if(|_, t| *t <= self.now) {
             let TimeFutureState::Waiting(waker) = x.0.0.get_pin().replace(TimeFutureState::Done)
