@@ -101,7 +101,7 @@ impl TimeScheduler {
             return false;
         };
         let dt = next.duration_since(self.now);
-        event_handler.handle_event(Event::TimeAdvancedEvent(dt));
+        event_handler.handle_event(Event::TimeAdvanced(dt));
         *time += dt;
         self.now = next;
         while let Some(x) = self.upcoming_events.pop_if(|_, t| *t <= self.now) {

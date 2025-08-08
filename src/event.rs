@@ -3,10 +3,10 @@ use std::{sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Event {
-    FuturePolledEvent,
-    TimeAdvancedEvent(Duration),
-    NodeSpawnedEvent(NodeId),
-    TaskSpawnedEvent,
+    FuturePolled,
+    TimeAdvanced(Duration),
+    NodeSpawned(NodeId),
+    TaskSpawned,
 }
 
 pub(crate) trait EventHandler: Send {

@@ -71,7 +71,7 @@ impl Context {
                     .borrow_mut()
                     .as_mut()
                     .unwrap()
-                    .record_event(Event::FuturePolledEvent);
+                    .record_event(Event::FuturePolled);
                 cx.ready_queue.borrow_mut().pop_front()
             }) {
                 runnable.run();
@@ -99,7 +99,7 @@ impl Context {
 
     pub fn new_node(&mut self) -> NodeId {
         let id = NodeId(self.nodes.len());
-        self.event_handler.handle_event(Event::NodeSpawnedEvent(id));
+        self.event_handler.handle_event(Event::NodeSpawned(id));
         self.nodes.push(Node {});
         id
     }
@@ -108,7 +108,7 @@ impl Context {
         node: Option<NodeId>,
         future: F,
     ) -> Task<F::Output> {
-        self.event_handler.handle_event(Event::TaskSpawnedEvent);
+        self.event_handler.handle_event(Event::TaskSpawned);
         let fut = NodeFuture {
             id: node,
             inner: future,
