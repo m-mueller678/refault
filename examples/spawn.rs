@@ -8,8 +8,8 @@ fn main() {
         let future1 = spawn(calculate_async());
         let future2 = spawn(calculate_async());
 
-        let val1 = future1.await;
-        let val2 = future2.await;
+        let val1 = future1.await.unwrap();
+        let val2 = future2.await.unwrap();
 
         println!("{}", val1 + val2);
     });

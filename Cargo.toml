@@ -16,6 +16,7 @@ futures-channel = "0.3"
 async-task="4.7.1"
 priority-queue = "2.0.0"
 pin-arc="0.2.1"
+cooked-waker="5"
 
 [dev-dependencies]
 chrono = "0.4.41"

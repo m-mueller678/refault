@@ -37,11 +37,12 @@ impl Future for Sleep {
         let state = state_storage.as_ref().get_pin();
         match state.replace(TimeFutureState::Done) {
             TimeFutureState::Init(instant) => with_context(|cx| {
-                if cx.time_scheduler.now >= instant {
+                if cx.executor.time_scheduler.now >= instant {
                     Poll::Ready(())
                 } else {
                     state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
-                    cx.time_scheduler
+                    cx.executor
+                        .time_scheduler
                         .upcoming_events
                         .push(QueueEntry(state_storage.as_ref().create_handle()), instant);
                     Poll::Pending

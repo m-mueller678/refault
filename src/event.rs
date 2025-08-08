@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Event {
-    FuturePolled,
+    TaskRun(usize),
     TimeAdvanced(Duration),
     NodeSpawned(NodeId),
     TaskSpawned,

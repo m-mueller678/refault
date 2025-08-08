@@ -1,6 +1,7 @@
 use crate::context::{Context, NodeId, with_context, with_context_option};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
+pub use crate::executor::{AbortHandle, TaskHandle, spawn, spawn_on_node};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -41,7 +42,7 @@ impl Runtime {
         self.run_simulation(
             Box::new(|| {
                 with_context(|cx| {
-                    cx.spawn(NodeId::INIT, f()).detach();
+                    cx.executor.spawn(NodeId::INIT, f());
                 })
             }),
             Box::new(NoopEventHandler),
@@ -59,7 +60,7 @@ impl Runtime {
             self.run_simulation(
                 Box::new(|| {
                     with_context(|cx| {
-                        cx.spawn(NodeId::INIT, future_producer()).detach();
+                        cx.executor.spawn(NodeId::INIT, future_producer());
                     })
                 }),
                 events,
@@ -106,14 +107,3 @@ pub fn create_node() -> NodeId {
 pub fn is_running() -> bool {
     with_context_option(|cx| cx.is_some())
 }
-
-/// Spawn a task on the current node
-pub fn spawn<F: Future + 'static>(future: F) -> Task<F::Output> {
-    with_context(|cx| cx.spawn(cx.current_node, future))
-}
-
-/// Spawn a task on the specified node.
-pub fn spawn_on_node<F: Future + 'static>(node: NodeId, future: F) -> Task<F::Output> {
-    with_context(|cx| cx.spawn(node, future))
-}
-pub type Task<T> = async_task::Task<T>;
