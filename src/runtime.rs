@@ -41,7 +41,7 @@ impl Runtime {
         self.run_simulation(
             Box::new(|| {
                 with_context(|cx| {
-                    cx.spawn(None, f()).detach();
+                    cx.spawn(NodeId::INIT, f()).detach();
                 })
             }),
             Box::new(NoopEventHandler),
@@ -59,7 +59,7 @@ impl Runtime {
             self.run_simulation(
                 Box::new(|| {
                     with_context(|cx| {
-                        cx.spawn(None, future_producer()).detach();
+                        cx.spawn(NodeId::INIT, future_producer()).detach();
                     })
                 }),
                 events,
@@ -95,7 +95,7 @@ impl Runtime {
     }
 }
 
-pub fn current_node() -> Option<NodeId> {
+pub fn current_node() -> NodeId {
     with_context(|cx| cx.current_node)
 }
 
@@ -114,6 +114,6 @@ pub fn spawn<F: Future + 'static>(future: F) -> Task<F::Output> {
 
 /// Spawn a task on the specified node.
 pub fn spawn_on_node<F: Future + 'static>(node: NodeId, future: F) -> Task<F::Output> {
-    with_context(|cx| cx.spawn(Some(node), future))
+    with_context(|cx| cx.spawn(node, future))
 }
 pub type Task<T> = async_task::Task<T>;

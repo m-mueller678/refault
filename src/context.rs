@@ -24,10 +24,10 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
     with_context_option(|cx| f(cx.as_mut().expect("no context set")))
 }
 pub struct Context {
-    pub current_node: Option<NodeId>,
+    pub current_node: NodeId,
+    next_node_id: NodeId,
     event_handler: Box<dyn EventHandler>,
     pub random_generator: ChaCha12Rng,
-    nodes: Vec<Node>,
     pub time_scheduler: Option<TimeScheduler>,
     time: Duration,
 }
@@ -37,7 +37,10 @@ struct Context2 {
 }
 #[derive(Eq, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
-pub struct Node {}
+
+impl NodeId {
+    pub const INIT: Self = NodeId(0);
+}
 
 impl Context {
     pub fn time(&self) -> Duration {
@@ -50,18 +53,23 @@ impl Context {
         start_time: Duration,
         init_fn: Box<dyn FnOnce() + '_>,
     ) -> Box<dyn EventHandler> {
-        let context = Context {
-            current_node: None,
+        let new_context = Context {
+            current_node: NodeId::INIT,
+            next_node_id: NodeId(1),
             event_handler,
             random_generator: ChaCha12Rng::seed_from_u64(seed),
             time: start_time,
-            nodes: Vec::new(),
             time_scheduler: None,
         };
-        CONTEXT.with(|cx| {
-            assert!(cx.context.borrow_mut().replace(context).is_none());
-            assert!(cx.ready_queue.borrow_mut().is_empty());
-        });
+        CONTEXT.with(
+            |Context2 {
+                 context,
+                 ready_queue,
+             }| {
+                assert!(context.borrow_mut().replace(new_context).is_none());
+                assert!(ready_queue.borrow_mut().is_empty());
+            },
+        );
         let time_scheduler = TimeScheduler::new();
         with_context(|cx| cx.time_scheduler = Some(time_scheduler));
         init_fn();
@@ -86,10 +94,15 @@ impl Context {
             }
         }
         CONTEXT
-            .with(|cx| {
-                debug_assert!(cx.ready_queue.borrow_mut().is_empty());
-                cx.context.borrow_mut().take().unwrap()
-            })
+            .with(
+                |Context2 {
+                     context,
+                     ready_queue,
+                 }| {
+                    debug_assert!(ready_queue.borrow_mut().is_empty());
+                    context.borrow_mut().take().unwrap()
+                },
+            )
             .event_handler
     }
 
@@ -98,16 +111,12 @@ impl Context {
     }
 
     pub fn new_node(&mut self) -> NodeId {
-        let id = NodeId(self.nodes.len());
+        let id = self.next_node_id;
         self.event_handler.handle_event(Event::NodeSpawned(id));
-        self.nodes.push(Node {});
+        self.next_node_id.0 += 1;
         id
     }
-    pub fn spawn<F: Future + 'static>(
-        &mut self,
-        node: Option<NodeId>,
-        future: F,
-    ) -> Task<F::Output> {
+    pub fn spawn<F: Future + 'static>(&mut self, node: NodeId, future: F) -> Task<F::Output> {
         self.event_handler.handle_event(Event::TaskSpawned);
         let fut = NodeFuture {
             id: node,
@@ -124,7 +133,7 @@ impl Context {
 
 pin_project_lite::pin_project! {
     pub(crate) struct NodeFuture<F:Future> {
-        id: Option<NodeId>,
+        id: NodeId ,
         #[pin]
         inner: F,
     }
@@ -136,13 +145,13 @@ impl<F: Future> Future for NodeFuture<F> {
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<F::Output> {
         let this = self.project();
         with_context(|cx| {
-            assert!(cx.current_node.is_none());
+            assert!(cx.current_node == NodeId::INIT);
             cx.current_node = *this.id;
         });
         let result = this.inner.poll(cx);
         with_context(|cx| {
             debug_assert_eq!(cx.current_node, *this.id);
-            cx.current_node = None;
+            cx.current_node = NodeId::INIT;
         });
         result
     }
