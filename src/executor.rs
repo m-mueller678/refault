@@ -175,6 +175,10 @@ impl Executor {
                                 .replace(Some(task))
                                 .is_none()
                         );
+                        None
+                    } else {
+                        // return the task outside the context scope, as drop may attempt to lock it.
+                        Some(task)
                     }
                 });
             }
