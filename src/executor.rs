@@ -5,6 +5,7 @@ use crate::{
 };
 use cooked_waker::{IntoWaker, WakeRef};
 use futures_channel::oneshot;
+use std::mem;
 use std::sync::atomic::Ordering::Relaxed;
 use std::task::Poll;
 use std::{
@@ -74,7 +75,7 @@ impl<F: Future> TaskDyn for Task<F> {
         match this.shared.state.load(Relaxed) {
             TASK_CANCELLED => false,
             TASK_READY => {
-                this.shared.state.store(this.shared.id, Relaxed);
+                this.shared.state.store(TASK_WAITING_OR_COMPLETE, Relaxed);
                 let waker = this.shared.clone().into_waker();
                 match this.fut.poll(&mut Context::from_waker(&waker)) {
                     Poll::Ready(x) => {
@@ -84,8 +85,7 @@ impl<F: Future> TaskDyn for Task<F> {
                     Poll::Pending => true,
                 }
             }
-            TASK_WAITING | TASK_END.. => {
-                //task is waiting, it should not have been scheduled
+            TASK_WAITING_OR_COMPLETE | TASK_END.. => {
                 unreachable!()
             }
         }
@@ -108,7 +108,7 @@ pub struct AbortHandle(Arc<TaskShared>);
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
-const TASK_WAITING: usize = 2;
+const TASK_WAITING_OR_COMPLETE: usize = 2;
 const TASK_END: usize = 3;
 
 struct TaskShared {
@@ -125,9 +125,8 @@ impl WakeRef for TaskShared {
             let ex = ex.as_mut().unwrap();
             assert_eq!(ex.id, self.executor_id);
             match self.state.load(Relaxed) {
-                TASK_CANCELLED => (),
-                TASK_READY => (),
-                TASK_WAITING => {
+                TASK_CANCELLED | TASK_READY => (),
+                TASK_WAITING_OR_COMPLETE => {
                     self.state.store(TASK_READY, Relaxed);
                     ex.ready_queue.push_back(self.id);
                 }
@@ -155,7 +154,7 @@ impl Executor {
             snd: Some(snd),
             fut: future,
             shared: Arc::new(TaskShared {
-                state: AtomicUsize::new(TASK_WAITING),
+                state: AtomicUsize::new(TASK_WAITING_OR_COMPLETE),
                 id: task_id,
                 node,
                 executor_id: self.id,
@@ -217,6 +216,20 @@ impl Executor {
                     .wait_until_next_future_ready(&cx2.time, &mut *cx.event_handler)
             }) {
                 break;
+            }
+        }
+        let tasks = with_context(|cx| mem::take(&mut cx.executor.tasks));
+        for task in tasks {
+            if cfg!(debug_assertions)
+                && let Some(task) = task.1.into_inner()
+            {
+                match task.as_base().state.load(Relaxed) {
+                    TASK_CANCELLED => (),
+                    TASK_READY | TASK_END.. => unreachable!(),
+                    TASK_WAITING_OR_COMPLETE => {
+                        eprintln!("task still waiting");
+                    }
+                }
             }
         }
     }
