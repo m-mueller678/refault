@@ -250,26 +250,37 @@ impl Executor {
     }
 }
 
+fn abort(
+    task_id: usize,
+    queue: &mut ExecutorQueue,
+    tasks: &mut HashMap<usize, TaskEntry>,
+) -> Option<Pin<Box<dyn TaskDyn>>> {
+    let task_entry = tasks.get_mut(&task_id).unwrap();
+    match task_entry.shared.state.load(Relaxed) {
+        TASK_CANCELLED | TASK_COMPLETE => None,
+        TASK_WAITING | TASK_READY => {
+            task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
+            queue.ready_queue.push_back(task_id);
+            let task = task_entry.task.take().unwrap();
+            Some(task)
+        }
+        TASK_END.. => unreachable!(),
+    }
+}
+
 impl AbortHandle {
     pub fn abort(self) {
-        Context2::with(|cx| {
+        drop(Context2::with(|cx| {
             let mut queue_guard = cx.queue.borrow_mut();
             let queue = queue_guard.as_mut().unwrap();
             assert_eq!(queue.id, self.0.executor_id);
-            match self.0.state.load(Relaxed) {
-                TASK_CANCELLED | TASK_COMPLETE => (),
-                TASK_WAITING | TASK_READY => {
-                    self.0.state.store(TASK_CANCELLED, Relaxed);
-                    queue.ready_queue.push_back(self.0.id);
-                    drop(queue_guard);
-                    let mut cx_guard = cx.context.borrow_mut();
-                    let executor = &mut cx_guard.as_mut().unwrap().executor;
-                    let task = executor.tasks.get_mut(&self.0.id).unwrap().task.take();
-                    drop(task);
-                }
-                TASK_END.. => unreachable!(),
-            };
-        });
+            abort(
+                self.0.id,
+                queue,
+                &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
+            )
+            // drop task outside all guards
+        }));
     }
 }
 
@@ -294,5 +305,27 @@ pub fn spawn_on_node<F: Future + 'static>(node: NodeId, future: F) -> TaskHandle
     with_context(|cx| {
         cx.event_handler.handle_event(Event::TaskSpawned);
         cx.executor.spawn(node, future)
+    })
+}
+
+pub fn kill_node_tasks(node: NodeId) {
+    Context2::with(|cx| {
+        let task_ids = {
+            let mut borrow_mut = cx.context.borrow_mut();
+            let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
+            node.into_iter().flatten().copied().collect::<Vec<usize>>()
+        };
+        for &task in &task_ids {
+            let task = abort(
+                task,
+                cx.queue.borrow_mut().as_mut().unwrap(),
+                &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
+            );
+            drop(task);
+        }
+        let mut borrow_mut = cx.context.borrow_mut();
+        let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
+        // task destructors may have spawned more tasks, probably unintentionally
+        assert!(node.is_none_or(|x| x.is_empty()))
     })
 }

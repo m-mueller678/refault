@@ -8,7 +8,7 @@ pub mod time;
 use crate::context::{Context, NodeId, with_context, with_context_option};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-pub use crate::executor::{AbortHandle, TaskHandle, spawn, spawn_on_node};
+pub use crate::executor::{AbortHandle, TaskHandle, kill_node_tasks, spawn, spawn_on_node};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
