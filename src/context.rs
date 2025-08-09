@@ -47,7 +47,7 @@ impl Context2 {
     }
 }
 
-#[derive(Eq, Debug, PartialEq, Clone, Copy)]
+#[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
 
 impl NodeId {

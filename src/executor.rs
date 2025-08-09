@@ -5,6 +5,7 @@ use crate::{
 };
 use cooked_waker::{IntoWaker, WakeRef};
 use futures_channel::oneshot;
+use std::collections::HashSet;
 use std::mem;
 use std::sync::atomic::Ordering::Relaxed;
 use std::task::Poll;
@@ -39,6 +40,7 @@ impl ExecutorQueue {
         Executor {
             id: self.id,
             tasks: HashMap::new(),
+            tasks_by_node: HashMap::new(),
             next_task_id: 0,
             time_scheduler: TimeScheduler::new(),
         }
@@ -50,9 +52,15 @@ pub struct Executor {
     // each entry corresponds to one TaskShared
     // entries are None while the task is executing, cancelled, or completed
     #[allow(clippy::type_complexity)]
-    tasks: HashMap<usize, Cell<Option<Pin<Box<dyn TaskDyn>>>>>,
+    tasks: HashMap<usize, TaskEntry>,
+    tasks_by_node: HashMap<NodeId, HashSet<usize>>,
     next_task_id: usize,
     pub time_scheduler: TimeScheduler,
+}
+
+struct TaskEntry {
+    shared: Arc<TaskShared>,
+    task: Cell<Option<Pin<Box<dyn TaskDyn>>>>,
 }
 
 pin_project_lite::pin_project! {
@@ -72,22 +80,14 @@ trait TaskDyn {
 impl<F: Future> TaskDyn for Task<F> {
     fn run(self: Pin<&mut Self>) -> bool {
         let this = self.project();
-        match this.shared.state.load(Relaxed) {
-            TASK_CANCELLED => false,
-            TASK_READY => {
-                this.shared.state.store(TASK_WAITING_OR_COMPLETE, Relaxed);
-                let waker = this.shared.clone().into_waker();
-                match this.fut.poll(&mut Context::from_waker(&waker)) {
-                    Poll::Ready(x) => {
-                        this.snd.take().unwrap().send(x).ok();
-                        false
-                    }
-                    Poll::Pending => true,
-                }
+        let waker = this.shared.clone().into_waker();
+        match this.fut.poll(&mut Context::from_waker(&waker)) {
+            Poll::Ready(x) => {
+                this.snd.take().unwrap().send(x).ok();
+                this.shared.state.store(TASK_COMPLETE, Relaxed);
+                false
             }
-            TASK_WAITING_OR_COMPLETE | TASK_END.. => {
-                unreachable!()
-            }
+            Poll::Pending => true,
         }
     }
 
@@ -108,10 +108,9 @@ pub struct AbortHandle(Arc<TaskShared>);
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
-// task is waiting if it is still Some in executor.tasks, it is completed if it is None
-// all tasks are temporarily None while executing.
-const TASK_WAITING_OR_COMPLETE: usize = 2;
-const TASK_END: usize = 3;
+const TASK_WAITING: usize = 2;
+const TASK_COMPLETE: usize = 3;
+const TASK_END: usize = 4;
 
 struct TaskShared {
     state: AtomicUsize,
@@ -127,23 +126,14 @@ impl WakeRef for TaskShared {
             let ex = ex.as_mut().unwrap();
             assert_eq!(ex.id, self.executor_id);
             match self.state.load(Relaxed) {
-                TASK_CANCELLED | TASK_READY => (),
-                TASK_WAITING_OR_COMPLETE => {
+                TASK_CANCELLED | TASK_COMPLETE | TASK_READY => (),
+                TASK_WAITING => {
                     self.state.store(TASK_READY, Relaxed);
                     ex.ready_queue.push_back(self.id);
                 }
                 TASK_END.. => unreachable!(),
             };
         });
-    }
-}
-
-impl Drop for TaskShared {
-    fn drop(&mut self) {
-        with_context(|cx| {
-            assert_eq!(cx.executor.id, self.executor_id);
-            cx.executor.tasks.remove(&self.id);
-        })
     }
 }
 
@@ -156,57 +146,79 @@ impl Executor {
             snd: Some(snd),
             fut: future,
             shared: Arc::new(TaskShared {
-                state: AtomicUsize::new(TASK_WAITING_OR_COMPLETE),
+                state: AtomicUsize::new(TASK_WAITING),
                 id: task_id,
                 node,
                 executor_id: self.id,
             }),
         });
+        let task_entry = TaskEntry {
+            shared: task.shared.clone(),
+            task: Cell::new(Some(task)),
+        };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: AbortHandle(task.shared.clone()),
+            abort: AbortHandle(task_entry.shared.clone()),
         };
-        self.tasks.insert(task_id, Cell::new(Some(task)));
+        self.tasks.insert(task_id, task_entry);
+        self.tasks_by_node.entry(node).or_default().insert(task_id);
         <TaskShared as WakeRef>::wake_by_ref(&*task_handle.abort.0);
         task_handle
+    }
+
+    fn remove_task_entry(&mut self, task_id: usize) {
+        let removed = self.tasks.remove(&task_id);
+        let task_entry = removed.unwrap();
+        debug_assert_eq!(task_entry.shared.id, task_id);
+        assert!(task_entry.task.into_inner().is_none());
+        let node = self.tasks_by_node.get_mut(&task_entry.shared.node).unwrap();
+        let removed = node.remove(&task_id);
+        debug_assert!(removed);
     }
 
     pub fn run_current_context() {
         loop {
             while let Some(mut task) = Context2::with(|cx| {
-                let task_id = cx
-                    .queue
-                    .borrow_mut()
-                    .as_mut()
-                    .unwrap()
-                    .ready_queue
-                    .pop_front()?;
-                let mut cx = cx.context.borrow_mut();
-                let cx = cx.as_mut().unwrap();
-                let task = cx.executor.tasks.get_mut(&task_id).unwrap().take()?;
-                cx.event_handler
-                    .handle_event(Event::TaskRun(task.as_base().id));
-                assert!(cx.current_node == NodeId::INIT);
-                cx.current_node = task.as_base().node;
-                Some(task)
+                loop {
+                    let task_id = cx
+                        .queue
+                        .borrow_mut()
+                        .as_mut()
+                        .unwrap()
+                        .ready_queue
+                        .pop_front()?;
+                    let mut cx = cx.context.borrow_mut();
+                    let cx = cx.as_mut().unwrap();
+                    let ex = &mut cx.executor;
+                    let task_entry = ex.tasks.get_mut(&task_id).unwrap();
+                    match task_entry.shared.state.load(Relaxed) {
+                        TASK_READY => (),
+                        TASK_CANCELLED => {
+                            let id = task_entry.shared.id;
+                            ex.remove_task_entry(id);
+                            continue;
+                        }
+                        TASK_COMPLETE | TASK_WAITING | TASK_END.. => unreachable!(),
+                    }
+                    let task = task_entry.task.take().unwrap();
+                    cx.event_handler
+                        .handle_event(Event::TaskRun(task_entry.shared.id));
+                    debug_assert!(cx.current_node == NodeId::INIT);
+                    cx.current_node = task_entry.shared.node;
+                    task_entry.shared.state.store(TASK_WAITING, Relaxed);
+                    break Some(task);
+                }
             }) {
                 let keep = task.as_mut().run();
                 with_context(|cx| {
-                    debug_assert_eq!(cx.current_node, task.as_base().node);
+                    let base = task.as_base();
+                    debug_assert_eq!(cx.current_node, base.node);
                     cx.current_node = NodeId::INIT;
                     if keep {
-                        assert!(
-                            cx.executor
-                                .tasks
-                                .get_mut(&task.as_base().id)
-                                .unwrap()
-                                .replace(Some(task))
-                                .is_none()
-                        );
-                        None
+                        let task_entry = cx.executor.tasks.get_mut(&base.id).unwrap();
+                        assert!(task_entry.task.replace(Some(task)).is_none());
                     } else {
-                        // return the task outside the context scope, as drop may attempt to lock it.
-                        Some(task)
+                        cx.executor.remove_task_entry(base.id);
                     }
                 });
             }
@@ -221,14 +233,15 @@ impl Executor {
             }
         }
         let tasks = with_context(|cx| mem::take(&mut cx.executor.tasks));
-        for task in tasks {
-            if cfg!(debug_assertions)
-                && let Some(task) = task.1.into_inner()
-            {
-                match task.as_base().state.load(Relaxed) {
-                    TASK_CANCELLED => (),
+        if cfg!(debug_assertions) {
+            for (_, TaskEntry { shared, task }) in tasks {
+                match shared.state.load(Relaxed) {
+                    TASK_CANCELLED | TASK_COMPLETE => {
+                        assert!(task.into_inner().is_none());
+                    }
                     TASK_READY | TASK_END.. => unreachable!(),
-                    TASK_WAITING_OR_COMPLETE => {
+                    TASK_WAITING => {
+                        assert!(task.into_inner().is_some());
                         eprintln!("task still waiting");
                     }
                 }
@@ -239,7 +252,24 @@ impl Executor {
 
 impl AbortHandle {
     pub fn abort(self) {
-        self.0.state.store(TASK_CANCELLED, Relaxed);
+        Context2::with(|cx| {
+            let mut queue_guard = cx.queue.borrow_mut();
+            let queue = queue_guard.as_mut().unwrap();
+            assert_eq!(queue.id, self.0.executor_id);
+            match self.0.state.load(Relaxed) {
+                TASK_CANCELLED | TASK_COMPLETE => (),
+                TASK_WAITING | TASK_READY => {
+                    self.0.state.store(TASK_CANCELLED, Relaxed);
+                    queue.ready_queue.push_back(self.0.id);
+                    drop(queue_guard);
+                    let mut cx_guard = cx.context.borrow_mut();
+                    let executor = &mut cx_guard.as_mut().unwrap().executor;
+                    let task = executor.tasks.get_mut(&self.0.id).unwrap().task.take();
+                    drop(task);
+                }
+                TASK_END.. => unreachable!(),
+            };
+        });
     }
 }
 
