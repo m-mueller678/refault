@@ -108,6 +108,8 @@ pub struct AbortHandle(Arc<TaskShared>);
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
+// task is waiting if it is still Some in executor.tasks, it is completed if it is None
+// all tasks are temporarily None while executing.
 const TASK_WAITING_OR_COMPLETE: usize = 2;
 const TASK_END: usize = 3;
 
