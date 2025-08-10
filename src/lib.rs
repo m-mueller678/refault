@@ -2,6 +2,7 @@ mod context;
 mod event;
 mod executor;
 mod interception;
+pub mod network;
 pub mod simulator;
 pub mod time;
 
