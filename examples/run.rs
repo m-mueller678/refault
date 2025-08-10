@@ -1,5 +1,6 @@
-use deterministic_simulation_core::{Runtime, time::sleep};
 use std::time::Duration;
+
+use deterministic_simulation_core::{runtime::Runtime, time::sleep};
 
 fn main() {
     Runtime::default().run(|| async {

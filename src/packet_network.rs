@@ -11,9 +11,8 @@ use either::Either::{Left, Right};
 
 use crate::{
     context::NodeId,
-    current_node,
+    runtime::{current_node, spawn},
     simulator::{Simulator, with_simulator},
-    spawn,
     time::sleep_until,
 };
 
