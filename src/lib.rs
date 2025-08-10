@@ -1,3 +1,6 @@
+//! Many functions within this crate should only be called from within a simulation and will panic otherwise.
+//! [NodeId::try_current](runtime::NodeId::try_current) may be used to check if inside the simulation.
+
 mod context;
 mod event;
 mod executor;

@@ -1,3 +1,4 @@
+use crate::context::with_context_option;
 use crate::event::Event;
 use crate::{
     context::{Context2, NodeId, with_context},
@@ -97,13 +98,52 @@ impl<F: Future> TaskDyn for Task<F> {
 }
 
 pin_project_lite::pin_project! {
+    /// A handle to a Task.
+    ///
+    /// Can be used to await its completion or abort it.
+    /// Awaiting this will return the value returned by the spawned future or `None` if the task was aborted.
+    ///
+    /// You must either poll this to completion or call [detach] or [abort].
+    /// Dropping the handle without doing any of those will panic.
     pub struct TaskHandle<T> {
         #[pin]
         result: oneshot::Receiver<T>,
         abort: AbortHandle,
+        droppable:bool,
+    }
+
+    impl<T> PinnedDrop for TaskHandle<T> {
+        fn drop(this: Pin<&mut Self>) {
+            assert!(
+                this.droppable,
+                "TaskHandle dropped. You must call either abort or detach it."
+            )
+        }
     }
 }
 
+impl<T> TaskHandle<T> {
+    /// Abort the associated task.
+    pub fn abort(mut self) {
+        self.abort.abort_inner();
+        self.droppable = true;
+    }
+
+    /// Detach this handle from the task, allowing the task to keep running.
+    pub fn detach(mut self) {
+        self.droppable = true;
+    }
+
+    /// Obtain a handle that can be used to abort the associated task.
+    pub fn abort_handle(&self) -> AbortHandle {
+        self.abort.clone()
+    }
+}
+
+/// A handle that can be used to abort a task.
+///
+/// Dropping this will not abort the task.
+#[derive(Clone)]
 pub struct AbortHandle(Arc<TaskShared>);
 
 const TASK_CANCELLED: usize = 0;
@@ -159,6 +199,7 @@ impl Executor {
         let task_handle = TaskHandle {
             result: rcv,
             abort: AbortHandle(task_entry.shared.clone()),
+            droppable: false,
         };
         self.tasks.insert(task_id, task_entry);
         self.tasks_by_node.entry(node).or_default().insert(task_id);
@@ -269,7 +310,12 @@ fn abort(
 }
 
 impl AbortHandle {
+    /// Abort the associated task.
     pub fn abort(self) {
+        self.abort_inner();
+    }
+
+    fn abort_inner(&self) {
         drop(Context2::with(|cx| {
             let mut queue_guard = cx.queue.borrow_mut();
             let queue = queue_guard.as_mut().unwrap();
@@ -288,11 +334,18 @@ impl<T> Future for TaskHandle<T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().result.poll(cx).map(Result::ok)
+        let this = self.project();
+        match this.result.poll(cx) {
+            Poll::Ready(x) => {
+                *this.droppable = true;
+                Poll::Ready(x.ok())
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
-/// Spawn a task on the current node
+/// Spawn a task on the current node.
 pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
     with_context(|cx| {
         cx.event_handler.handle_event(Event::TaskSpawned);
@@ -300,32 +353,66 @@ pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
     })
 }
 
-/// Spawn a task on the specified node.
-pub fn spawn_on_node<F: Future + 'static>(node: NodeId, future: F) -> TaskHandle<F::Output> {
-    with_context(|cx| {
-        cx.event_handler.handle_event(Event::TaskSpawned);
-        cx.executor.spawn(node, future)
-    })
-}
+impl NodeId {
+    /// Create a new node that tasks can be run on.
+    ///
+    /// Can only be called from within a simulation.
+    pub fn create_node() -> NodeId {
+        with_context(|cx| cx.new_node())
+    }
 
-pub fn kill_node_tasks(node: NodeId) {
-    Context2::with(|cx| {
-        let task_ids = {
+    /// Spawn a task on this node.
+    ///
+    /// Can only be called from within a simulation.
+    pub fn spawn<F: Future + 'static>(self, future: F) -> TaskHandle<F::Output> {
+        with_context(|cx| {
+            cx.event_handler.handle_event(Event::TaskSpawned);
+            cx.executor.spawn(self, future)
+        })
+    }
+
+    /// Returns the id of the node this task is running on.
+    ///
+    /// Can only be called from within a simulation.
+    pub fn current() -> Self {
+        with_context(|cx| cx.current_node)
+    }
+
+    /// Returns the id of the current node if within the simulation.
+    /// Returns `None` otherwise.
+    pub fn try_current() -> Option<Self> {
+        with_context_option(|cx| {
+            if let Some(cx) = cx {
+                Some(cx.current_node)
+            } else {
+                None
+            }
+        })
+    }
+    ///
+    /// Kill all tasks on this node.
+    ///
+    /// The associated futures are dropped within this call.
+    /// Will panic if the drop implementations spawn more tasks on this node.
+    pub fn kill_node_tasks(node: NodeId) {
+        Context2::with(|cx| {
+            let task_ids = {
+                let mut borrow_mut = cx.context.borrow_mut();
+                let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
+                node.into_iter().flatten().copied().collect::<Vec<usize>>()
+            };
+            for &task in &task_ids {
+                let task = abort(
+                    task,
+                    cx.queue.borrow_mut().as_mut().unwrap(),
+                    &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
+                );
+                drop(task);
+            }
             let mut borrow_mut = cx.context.borrow_mut();
             let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
-            node.into_iter().flatten().copied().collect::<Vec<usize>>()
-        };
-        for &task in &task_ids {
-            let task = abort(
-                task,
-                cx.queue.borrow_mut().as_mut().unwrap(),
-                &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
-            );
-            drop(task);
-        }
-        let mut borrow_mut = cx.context.borrow_mut();
-        let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
-        // task destructors may have spawned more tasks, probably unintentionally
-        assert!(node.is_none_or(|x| x.is_empty()))
-    })
+            // task destructors may have spawned more tasks, probably unintentionally
+            assert!(node.is_none_or(|x| x.is_empty()))
+        })
+    }
 }

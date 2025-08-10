@@ -11,7 +11,7 @@ use either::Either::{Left, Right};
 
 use crate::{
     context::NodeId,
-    runtime::{current_node, spawn},
+    runtime::spawn,
     simulator::{Simulator, with_simulator},
     time::sleep_until,
 };
@@ -109,7 +109,7 @@ pub fn packet_type_id(p: &dyn Packet) -> TypeId {
 
 pub async fn send_packet(dst: NodeId, content: Box<dyn Packet>) -> Result<(), std::io::Error> {
     let mut packet = WrappedPacket {
-        src: current_node(),
+        src: NodeId::current(),
         dst,
         id: PacketId(0),
         content: Cell::new(Some(content)),
@@ -218,7 +218,7 @@ impl Drop for ReceiveFuture {
 pub async fn receive<T: Packet>() -> Result<(NodeId, Box<T>), std::io::Error> {
     let received = ReceiveFuture {
         type_id: TypeId::of::<T>(),
-        node_id: current_node(),
+        node_id: NodeId::current(),
         waker_registered: false,
     }
     .await?;

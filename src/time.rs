@@ -1,3 +1,14 @@
+//! Waiting for the passage of simulated time.
+//!
+//! Unlike real physical time, simulated time does not advance on its own.
+//! The runtime drives all tasks as far as possible before advancing time.
+//! When there are no more tasks ready to be run, the runtime checks if there are any tasks waiting on a [Sleep] future.
+//! If so, time is advanced to the precise instant at which the next task will be awoken.
+//! If there are no tasks ready to be run and no tasks waiting on a [Sleep], the simulation ends.
+//!
+//! Within the simulation, the standard library time functions return simulated time.
+//! To control the starting time of the simulation, see [with_simulation_start_time](crate::runtime::Runtime::with_simulation_start_time).
+
 use crate::context::with_context;
 use crate::event::{Event, EventHandler};
 use pin_arc::{PinRc, PinRcStorage};
@@ -9,6 +20,7 @@ use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 pin_project_lite::pin_project! {
+    /// The future returned by [sleep] and [sleep_until].
     pub struct Sleep {
         #[pin]
         state: PinRcStorage<Cell<TimeFutureState>>,
@@ -116,10 +128,12 @@ impl TimeScheduler {
     }
 }
 
+/// Wait until `deadline`.
 pub fn sleep_until(deadline: Instant) -> Sleep {
     Sleep::new(deadline)
 }
 
+/// Wait for `duration`.
 pub fn sleep(duration: Duration) -> Sleep {
     Sleep::new(Instant::now() + duration)
 }

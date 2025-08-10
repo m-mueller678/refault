@@ -47,11 +47,12 @@ impl Context2 {
     }
 }
 
+/// A unique identifier for a node within a simulation.
 #[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
 pub struct NodeId(usize);
 
 impl NodeId {
-    pub const INIT: Self = NodeId(0);
+    pub(crate) const INIT: Self = NodeId(0);
 }
 
 impl Context {

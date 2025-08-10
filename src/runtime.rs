@@ -1,18 +1,19 @@
-use crate::context::{Context, NodeId, with_context, with_context_option};
+//! Controlling simulations, tasks and nodes.
+pub use crate::context::NodeId;
+use crate::context::{Context, with_context};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-pub use crate::executor::{AbortHandle, TaskHandle, kill_node_tasks, spawn, spawn_on_node};
+pub use crate::executor::{AbortHandle, TaskHandle, spawn};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The simulation runtime.
 ///
-/// This type holds all the confiuration encessary to start a simulation.
+/// A Runtime object is used to configure and start simulations.
 pub struct Runtime {
     seed: u64,
     simulation_start_time: Duration,
-    fast_forward_time: bool,
 }
 
 impl Default for Runtime {
@@ -20,27 +21,32 @@ impl Default for Runtime {
         Self {
             seed: 0,
             simulation_start_time: Duration::from_secs(1648339195),
-            fast_forward_time: true,
         }
     }
 }
 
 impl Runtime {
+    /// Construct a new runtime with the default configuration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the seed used for random number generation.
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
     }
 
+    /// Set the system time at the start of the simulation.
     pub fn with_simulation_start_time(mut self, simulation_start_time: SystemTime) -> Self {
         self.simulation_start_time = simulation_start_time.duration_since(UNIX_EPOCH).unwrap();
         self
     }
 
-    pub fn with_fast_forward_time(mut self, fast_forward_time: bool) -> Self {
-        self.fast_forward_time = fast_forward_time;
-        self
-    }
-
+    /// Run a simulation.
+    /// Within the simulation, `f` is invoked to create a future, which is then spawned on the runtime's executor.
+    /// After `f` completes, the executor starts running.
+    /// The simulation continues until no task can make any more progress.
     pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
         self.run_simulation(
             Box::new(|| {
@@ -52,6 +58,10 @@ impl Runtime {
         );
     }
 
+    /// Runs a simulation repeatedly to check if it is deterministic.
+    /// Various events are recorded during the execution.
+    /// If the sequence of events differs between runs, a panic is raised.
+    /// See [run](Self::run) for details how the simulation is run.
     pub fn check_determinism<F: Future<Output = ()> + 'static>(
         &self,
         mut future_producer: impl FnMut() -> F + Send,
@@ -97,16 +107,4 @@ impl Runtime {
                 .unwrap()
         })
     }
-}
-
-pub fn current_node() -> NodeId {
-    with_context(|cx| cx.current_node)
-}
-
-pub fn create_node() -> NodeId {
-    with_context(|cx| cx.new_node())
-}
-
-pub fn is_running() -> bool {
-    with_context_option(|cx| cx.is_some())
 }
