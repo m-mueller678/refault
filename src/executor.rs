@@ -98,12 +98,12 @@ impl<F: Future> TaskDyn for Task<F> {
 }
 
 pin_project_lite::pin_project! {
-    /// A handle to a Task.
+    /// A handle to a task.
     ///
-    /// Can be used to await its completion or abort it.
-    /// Awaiting this will return the value returned by the spawned future or `None` if the task was aborted.
+    /// A task handle can be used to await a tasks completion or to abort it.
+    /// Awaiting it will return the value returned by the spawned future or `None` if the task was aborted.
     ///
-    /// You must either poll this to completion or call [detach] or [abort].
+    /// A task handle must either be polled to completion or destroyd via [detach](Self::detach) or [abort](Self::abort).
     /// Dropping the handle without doing any of those will panic.
     pub struct TaskHandle<T> {
         #[pin]
