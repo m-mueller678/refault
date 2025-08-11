@@ -1,9 +1,9 @@
 //! Controlling simulations, tasks and nodes.
+use crate::context::Context;
 pub use crate::context::NodeId;
-use crate::context::{Context, with_context};
+pub use crate::context::executor::{AbortHandle, TaskHandle, spawn};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-pub use crate::executor::{AbortHandle, TaskHandle, spawn};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -50,9 +50,7 @@ impl Runtime {
     pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
         self.run_simulation(
             Box::new(|| {
-                with_context(|cx| {
-                    cx.executor.spawn(NodeId::INIT, f());
-                })
+                NodeId::INIT.spawn(f());
             }),
             Box::new(NoopEventHandler),
         );
@@ -64,7 +62,7 @@ impl Runtime {
     /// See [run](Self::run) for details how the simulation is run.
     pub fn check_determinism<F: Future<Output = ()> + 'static>(
         &self,
-        mut future_producer: impl FnMut() -> F + Send,
+        mut f: impl FnMut() -> F + Send,
         iterations: usize,
     ) {
         assert!(iterations > 1);
@@ -72,9 +70,7 @@ impl Runtime {
         let mut run_with_events = |events| {
             self.run_simulation(
                 Box::new(|| {
-                    with_context(|cx| {
-                        cx.executor.spawn(NodeId::INIT, future_producer());
-                    })
+                    NodeId::INIT.spawn(f());
                 }),
                 events,
             )

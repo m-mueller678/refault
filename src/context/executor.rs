@@ -2,8 +2,8 @@ use crate::context::with_context_option;
 use crate::event::Event;
 use crate::simulator::for_all_simulators;
 use crate::{
+    context::time::TimeScheduler,
     context::{Context2, NodeId, with_context},
-    time::TimeScheduler,
 };
 use cooked_waker::{IntoWaker, WakeRef};
 use futures_channel::oneshot;

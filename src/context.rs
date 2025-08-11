@@ -1,6 +1,9 @@
+pub mod executor;
+pub mod time;
+
 use crate::event::{Event, EventHandler};
-use crate::executor::{Executor, ExecutorQueue};
 use crate::simulator::Simulator;
+use executor::{Executor, ExecutorQueue};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use std::any::TypeId;
@@ -27,9 +30,9 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
 }
 
 pub struct Context {
-    pub current_node: NodeId,
-    pub next_node_id: NodeId,
-    pub executor: Executor,
+    current_node: NodeId,
+    next_node_id: NodeId,
+    executor: Executor,
     pub event_handler: Box<dyn EventHandler>,
     pub simulators: HashMap<TypeId, Rc<RefCell<dyn Simulator>>>,
 }
