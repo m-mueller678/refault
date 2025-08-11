@@ -1,5 +1,6 @@
 use crate::context::with_context_option;
 use crate::event::Event;
+use crate::simulator::for_all_simulators;
 use crate::{
     context::{Context2, NodeId, with_context},
     time::TimeScheduler,
@@ -398,7 +399,8 @@ impl NodeId {
         Context2::with(|cx| {
             let task_ids = {
                 let mut borrow_mut = cx.context.borrow_mut();
-                let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
+                let context = borrow_mut.as_mut().unwrap();
+                let node = context.executor.tasks_by_node.get(&node);
                 node.into_iter().flatten().copied().collect::<Vec<usize>>()
             };
             for &task in &task_ids {
@@ -410,9 +412,16 @@ impl NodeId {
                 drop(task);
             }
             let mut borrow_mut = cx.context.borrow_mut();
-            let node = (&borrow_mut.as_mut().unwrap().executor.tasks_by_node).get(&node);
+            let context = borrow_mut.as_mut().unwrap();
+            let node = context.executor.tasks_by_node.get(&node);
             // task destructors may have spawned more tasks, probably unintentionally
             assert!(node.is_none_or(|x| x.is_empty()))
-        })
+        });
+        for_all_simulators(|x| x.node_tasks_killed(node));
+    }
+
+    /// Iterate over all nodes in the current simulation.
+    pub fn all() -> impl Iterator<Item = NodeId> {
+        (0..with_context(|cx| cx.next_node_id.0)).map(NodeId)
     }
 }

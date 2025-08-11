@@ -28,7 +28,7 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
 
 pub struct Context {
     pub current_node: NodeId,
-    next_node_id: NodeId,
+    pub next_node_id: NodeId,
     pub executor: Executor,
     pub event_handler: Box<dyn EventHandler>,
     pub simulators: HashMap<TypeId, Rc<RefCell<dyn Simulator>>>,
@@ -49,7 +49,7 @@ impl Context2 {
 
 /// A unique identifier for a node within a simulation.
 #[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
-pub struct NodeId(usize);
+pub struct NodeId(pub(crate) usize);
 
 impl NodeId {
     pub(crate) const INIT: Self = NodeId(0);

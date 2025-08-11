@@ -20,6 +20,7 @@ use crate::context::{NodeId, with_context};
 ///
 /// Simulators are notified by the runtime about various events.
 /// It is entirely up to the implementor how they react to these events.
+/// The default implementations do nothing.
 pub trait Simulator: Any {
     /// A new node was created via [NodeId::create_node].
     /// There may already be multiple nodes in existence at the time a simulator is created.
@@ -27,6 +28,10 @@ pub trait Simulator: Any {
     /// For example, this is not invoked for the first node, which is created by the runtime to run the function passed to [run](crate::runtime::Runtime::run) and the future it returns.
     #[allow(unused_variables)]
     fn node_created(&mut self, id: NodeId) {}
+    /// [kill_node_tasks](crate::runtime::NodeId::kill_node_tasks) was called.
+    /// This is called immediately before returning to the user and may be used to respawn per-node tasks.
+    #[allow(unused_variables)]
+    fn node_tasks_killed(&mut self, id: NodeId) {}
 }
 
 /// Add a simulator to the simulation.
@@ -59,4 +64,12 @@ pub fn with_simulator<S: Simulator, R>(f: impl FnOnce(&mut S) -> R) -> R {
         f(x.as_mut()
             .unwrap_or_else(|| panic!("simulator does not exist: {}", type_name::<S>())))
     })
+}
+
+pub(crate) fn for_all_simulators(mut f: impl FnMut(&mut dyn Simulator)) {
+    let simulators: Vec<_> = with_context(|cx| cx.simulators.values().cloned().collect());
+    for s in &simulators {
+        f(&mut *s.borrow_mut());
+    }
+    debug_assert_eq!(simulators.len(), with_context(|cx| cx.simulators.len()));
 }
