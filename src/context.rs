@@ -73,7 +73,7 @@ impl Context2 {
 
 /// A unique identifier for a node within a simulation.
 #[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
-pub struct NodeId(pub(crate) usize, ContextAnchor);
+pub struct NodeId(pub(crate) usize);
 
 impl NodeId {
     pub(crate) const INIT: Self = NodeId(0);
@@ -138,12 +138,4 @@ impl Context {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct ContextAnchor {
-    // not Send
-    _p: PhantomData<*const ()>,
-}
-
-impl ContextAnchor {
-    pub fn check(self) {}
-}
+pub type NotSendSync = PhantomData<*const ()>;

@@ -19,7 +19,7 @@ use std::{
     task::Context,
 };
 
-use super::ContextAnchor;
+use super::NotSendSync;
 
 pub struct ExecutorQueue {
     ready_queue: VecDeque<usize>,
@@ -141,7 +141,7 @@ impl<T> TaskHandle<T> {
 ///
 /// Dropping this will not abort the task.
 #[derive(Clone)]
-pub struct AbortHandle(Arc<TaskShared>);
+pub struct AbortHandle(Arc<TaskShared>, NotSendSync);
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
@@ -150,7 +150,6 @@ const TASK_COMPLETE: usize = 3;
 const TASK_END: usize = 4;
 
 struct TaskShared {
-    anchor: ContextAnchor,
     state: AtomicUsize,
     id: usize,
     node: NodeId,
@@ -159,7 +158,6 @@ struct TaskShared {
 impl WakeRef for TaskShared {
     fn wake_by_ref(&self) {
         Context2::with(|cx| {
-            self.anchor.check();
             let mut ex = cx.queue.borrow_mut();
             let ex = ex.as_mut().unwrap();
             match self.state.load(Relaxed) {
@@ -194,7 +192,7 @@ impl Executor {
         };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: AbortHandle(task_entry.shared.clone()),
+            abort: AbortHandle(task_entry.shared.clone(), NotSendSync::default()),
             droppable: false,
         };
         self.tasks.insert(task_id, task_entry);
@@ -313,7 +311,6 @@ impl AbortHandle {
 
     fn abort_inner(&self) {
         drop(Context2::with_in_node(self.0.node, |cx| {
-            self.0.anchor.check();
             let mut queue_guard = cx.queue.borrow_mut();
             let queue = queue_guard.as_mut().unwrap();
             abort_local(
