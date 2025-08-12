@@ -19,11 +19,8 @@ use std::{
     task::Context,
 };
 
-static EXECUTOR_ID: AtomicUsize = AtomicUsize::new(0);
-
 pub struct ExecutorQueue {
     ready_queue: VecDeque<usize>,
-    id: usize,
 }
 
 impl ExecutorQueue {
@@ -34,13 +31,11 @@ impl ExecutorQueue {
     pub fn new() -> Self {
         ExecutorQueue {
             ready_queue: VecDeque::new(),
-            id: EXECUTOR_ID.fetch_add(1, Relaxed),
         }
     }
 
     pub fn executor(&self) -> Executor {
         Executor {
-            id: self.id,
             tasks: HashMap::new(),
             tasks_by_node: HashMap::new(),
             next_task_id: 0,
@@ -50,7 +45,6 @@ impl ExecutorQueue {
 }
 
 pub struct Executor {
-    id: usize,
     // each entry corresponds to one TaskShared
     // entries are None while the task is executing, cancelled, or completed
     #[allow(clippy::type_complexity)]
@@ -155,7 +149,6 @@ const TASK_END: usize = 4;
 
 struct TaskShared {
     state: AtomicUsize,
-    executor_id: usize,
     id: usize,
     node: NodeId,
 }
@@ -165,7 +158,6 @@ impl WakeRef for TaskShared {
         Context2::with(|cx| {
             let mut ex = cx.queue.borrow_mut();
             let ex = ex.as_mut().unwrap();
-            assert_eq!(ex.id, self.executor_id);
             match self.state.load(Relaxed) {
                 TASK_CANCELLED | TASK_COMPLETE | TASK_READY => (),
                 TASK_WAITING => {
@@ -190,7 +182,6 @@ impl Executor {
                 state: AtomicUsize::new(TASK_WAITING),
                 id: task_id,
                 node,
-                executor_id: self.id,
             }),
         });
         let task_entry = TaskEntry {
@@ -265,11 +256,11 @@ impl Executor {
                 });
             }
             if !Context2::with(|cx2| {
-                let mut cx = cx2.context.borrow_mut();
-                let cx = cx.as_mut().unwrap();
-                cx.executor
-                    .time_scheduler
-                    .wait_until_next_future_ready(&cx2.time, &mut *cx.event_handler)
+                cx2.with_cx(|cx| {
+                    cx.executor
+                        .time_scheduler
+                        .wait_until_next_future_ready(&cx2.time, &mut *cx.event_handler)
+                })
             }) {
                 break;
             }
@@ -292,7 +283,7 @@ impl Executor {
     }
 }
 
-fn abort(
+fn abort_local(
     task_id: usize,
     queue: &mut ExecutorQueue,
     tasks: &mut HashMap<usize, TaskEntry>,
@@ -317,11 +308,10 @@ impl AbortHandle {
     }
 
     fn abort_inner(&self) {
-        drop(Context2::with(|cx| {
+        drop(Context2::with_in_node(self.0.node, |cx| {
             let mut queue_guard = cx.queue.borrow_mut();
             let queue = queue_guard.as_mut().unwrap();
-            assert_eq!(queue.id, self.0.executor_id);
-            abort(
+            abort_local(
                 self.0.id,
                 queue,
                 &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
@@ -348,10 +338,7 @@ impl<T> Future for TaskHandle<T> {
 
 /// Spawn a task on the current node.
 pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
-    with_context(|cx| {
-        cx.event_handler.handle_event(Event::TaskSpawned);
-        cx.executor.spawn(cx.current_node, future)
-    })
+    NodeId::current().spawn(future)
 }
 
 impl NodeId {
@@ -367,6 +354,7 @@ impl NodeId {
     /// Can only be called from within a simulation.
     pub fn spawn<F: Future + 'static>(self, future: F) -> TaskHandle<F::Output> {
         with_context(|cx| {
+            assert!(!cx.stopped[self.0]);
             cx.event_handler.handle_event(Event::TaskSpawned);
             cx.executor.spawn(self, future)
         })
@@ -390,34 +378,29 @@ impl NodeId {
             }
         })
     }
+
+    /// Invoke Simulator::stop on all simulators and stop all tasks on this node.
     ///
-    /// Kill all tasks on this node.
-    ///
-    /// The associated futures are dropped within this call.
-    /// Will panic if the drop implementations spawn more tasks on this node.
-    pub fn kill_node_tasks(node: NodeId) {
-        Context2::with(|cx| {
+    /// Attempting to spawn tasks on a stopped node will panic.
+    pub fn stop(self) {
+        Context2::with_in_node(self, |cx2| {
+            for_all_simulators(false, |x| x.stop_node());
             let task_ids = {
-                let mut borrow_mut = cx.context.borrow_mut();
-                let context = borrow_mut.as_mut().unwrap();
-                let node = context.executor.tasks_by_node.get(&node);
-                node.into_iter().flatten().copied().collect::<Vec<usize>>()
+                cx2.with_cx(|context| {
+                    let node = context.executor.tasks_by_node.get(&self);
+                    node.into_iter().flatten().copied().collect::<Vec<usize>>()
+                })
             };
             for &task in &task_ids {
-                let task = abort(
-                    task,
-                    cx.queue.borrow_mut().as_mut().unwrap(),
-                    &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
-                );
-                drop(task);
+                drop(cx2.with_cx(|cx| {
+                    abort_local(
+                        task,
+                        cx2.queue.borrow_mut().as_mut().unwrap(),
+                        &mut cx.executor.tasks,
+                    )
+                }))
             }
-            let mut borrow_mut = cx.context.borrow_mut();
-            let context = borrow_mut.as_mut().unwrap();
-            let node = context.executor.tasks_by_node.get(&node);
-            // task destructors may have spawned more tasks, probably unintentionally
-            assert!(node.is_none_or(|x| x.is_empty()))
         });
-        for_all_simulators(|x| x.node_tasks_killed(node));
     }
 
     /// Iterate over all nodes in the current simulation.

@@ -9,7 +9,7 @@ use rand_chacha::ChaCha12Rng;
 use std::any::TypeId;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::mem;
 use std::time::Duration;
 
 thread_local! {
@@ -29,15 +29,20 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
     with_context_option(|cx| f(cx.as_mut().expect("no context set")))
 }
 
+pub type SimulatorRc = Option<Box<dyn Simulator>>;
+
 pub struct Context {
     current_node: NodeId,
     next_node_id: NodeId,
     executor: Executor,
     pub event_handler: Box<dyn EventHandler>,
-    pub simulators: HashMap<TypeId, Rc<RefCell<dyn Simulator>>>,
+    pub simulators_by_type: HashMap<TypeId, usize>,
+    pub simulators: Vec<SimulatorRc>,
+    pub stopped: Vec<bool>,
 }
 
 pub struct Context2 {
+    //TODO Context anchor object to ensure objects are not moved between contexts
     pub context: RefCell<Option<Context>>,
     pub rng: RefCell<Option<ChaCha12Rng>>,
     pub time: Cell<Option<Duration>>,
@@ -47,6 +52,21 @@ pub struct Context2 {
 impl Context2 {
     pub fn with<R>(f: impl FnOnce(&Context2) -> R) -> R {
         CONTEXT.with(f)
+    }
+
+    pub fn with_in_node<R>(node: NodeId, f: impl FnOnce(&Context2) -> R) -> R {
+        Self::with(|cx| {
+            let calling_node = with_context(|cx| mem::replace(&mut cx.current_node, node));
+            let ret = f(cx);
+            with_context(|cx| {
+                cx.current_node = calling_node;
+            });
+            ret
+        })
+    }
+
+    pub fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
+        f(self.context.borrow_mut().as_mut().unwrap())
     }
 }
 
@@ -79,12 +99,14 @@ impl Context {
                 );
                 assert!(queue.borrow_mut().replace(ExecutorQueue::new()).is_none());
                 let new_context = Context {
+                    stopped: vec![false],
                     current_node: NodeId::INIT,
                     executor: queue.borrow_mut().as_mut().unwrap().executor(),
                     next_node_id: NodeId(1),
                     event_handler,
                     // random is already deterministic at this point.
-                    simulators: HashMap::new(),
+                    simulators: Vec::new(),
+                    simulators_by_type: HashMap::new(),
                 };
                 assert!(context.borrow_mut().replace(new_context).is_none());
             },
