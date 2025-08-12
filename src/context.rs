@@ -9,6 +9,7 @@ use rand_chacha::ChaCha12Rng;
 use std::any::TypeId;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::mem;
 use std::time::Duration;
 
@@ -72,7 +73,7 @@ impl Context2 {
 
 /// A unique identifier for a node within a simulation.
 #[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
-pub struct NodeId(pub(crate) usize);
+pub struct NodeId(pub(crate) usize, ContextAnchor);
 
 impl NodeId {
     pub(crate) const INIT: Self = NodeId(0);
@@ -135,4 +136,14 @@ impl Context {
         self.next_node_id.0 += 1;
         id
     }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub struct ContextAnchor {
+    // not Send
+    _p: PhantomData<*const ()>,
+}
+
+impl ContextAnchor {
+    pub fn check(self) {}
 }
