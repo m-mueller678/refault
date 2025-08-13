@@ -1,4 +1,5 @@
 pub mod executor;
+pub mod id;
 pub mod time;
 
 use crate::event::{Event, EventHandler};
@@ -70,12 +71,6 @@ impl Context2 {
 
     pub fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
         f(self.context.borrow_mut().as_mut().unwrap())
-    }
-
-    pub fn gen_id(&self) -> u64 {
-        let id = self.pre_next_global_id.get() + 1;
-        self.pre_next_global_id.set(id);
-        id
     }
 }
 
