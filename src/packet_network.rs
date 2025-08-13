@@ -4,7 +4,7 @@ use crate::{
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
 };
-use futures::{Sink, SinkExt, Stream};
+use futures::{Sink, SinkExt, Stream, never::Never};
 use futures_channel::mpsc;
 use std::{
     any::{Any, TypeId},
@@ -17,6 +17,8 @@ use std::{
 use std::{marker::PhantomData, task::ready};
 
 pub trait Packet: Any {}
+impl Packet for () {}
+impl Packet for Never {}
 
 pub trait ConnectivityFunction {
     fn send_connectivity(&mut self, packet: &WrappedPacket) -> SendConnectivity;
@@ -119,7 +121,7 @@ pub fn packet_type_id(p: &dyn Packet) -> TypeId {
 pub struct NetworkBox(Box<dyn NetworkTrait>);
 
 pub trait NetworkTrait: Simulator {
-    fn open(&mut self, ty: TypeId, port: u64) -> Result<Box<dyn Socket>, Error>;
+    fn open(&mut self, ty: TypeId, port: u64) -> Result<Pin<Box<dyn Socket>>, Error>;
 }
 
 pub trait Socket:
@@ -232,14 +234,14 @@ impl Simulator for NetworkBox {
 }
 
 impl NetworkTrait for PacketNetwork {
-    fn open(&mut self, ty: TypeId, port: u64) -> Result<Box<dyn Socket>, Error> {
+    fn open(&mut self, ty: TypeId, port: u64) -> Result<Pin<Box<dyn Socket>>, Error> {
         let node = NodeId::current();
         let Entry::Vacant(x) = self.receivers.entry((node, ty, port)) else {
             return Err(Error::new(ErrorKind::AddrInUse, "address in use"));
         };
         let (s, recv) = mpsc::unbounded();
         x.insert(s);
-        Ok(Box::new(DefaultSocket {
+        Ok(Box::pin(DefaultSocket {
             port,
             ty,
             node,
@@ -270,15 +272,15 @@ pin_project_lite::pin_project! {
     }
 }
 
-pub struct SocketBox<A, B> {
+pub struct SocketBox<Receive: Packet> {
     inner: Pin<Box<dyn Socket>>,
     port: u64,
-    dst: NodeId,
-    _p: PhantomData<fn(A) -> B>,
+    src: NodeId,
+    _p: PhantomData<fn() -> Receive>,
 }
 
-impl<A: Packet, B: Packet> Stream for SocketBox<A, B> {
-    type Item = Result<(NodeId, u64, B), Error>;
+impl<Receive: Packet> Stream for SocketBox<Receive> {
+    type Item = Result<(NodeId, u64, Receive), Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -296,7 +298,7 @@ impl<A: Packet, B: Packet> Stream for SocketBox<A, B> {
     }
 }
 
-impl<A: Packet, B: Packet> Sink<(NodeId, u64, A)> for SocketBox<A, B> {
+impl<Receive: Packet, A: Packet> Sink<(NodeId, u64, A)> for SocketBox<Receive> {
     type Error = Error;
 
     fn poll_ready(
@@ -326,5 +328,20 @@ impl<A: Packet, B: Packet> Sink<(NodeId, u64, A)> for SocketBox<A, B> {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
         self.inner.as_mut().poll_close(cx)
+    }
+}
+
+impl<Receive: Packet> SocketBox<Receive> {
+    pub fn new(port: u64) -> Result<Self, Error> {
+        simulator::<NetworkBox>().with(|net| {
+            net.0
+                .open(TypeId::of::<Receive>(), port)
+                .map(|inner| SocketBox {
+                    inner,
+                    port,
+                    src: NodeId::current(),
+                    _p: PhantomData,
+                })
+        })
     }
 }
