@@ -1,8 +1,8 @@
 //! Controlling simulations, tasks and nodes.
+use crate::context::Context;
 pub use crate::context::NodeId;
 pub use crate::context::executor::{AbortHandle, TaskHandle, spawn};
 pub use crate::context::id::Id;
-use crate::context::{Context, Context2};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use std::sync::Arc;
@@ -104,11 +104,4 @@ impl Runtime {
                 .unwrap()
         })
     }
-}
-
-/// Generate unique Id within the simulation.
-///
-/// Ids are generated sequentially starting from some small number.
-pub fn gen_id() -> u64 {
-    Context2::with(|cx| cx.gen_id())
 }

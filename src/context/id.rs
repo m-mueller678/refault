@@ -1,5 +1,6 @@
 use super::Context2;
 
+/// A unique Id within a simulation.
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
 pub struct Id(u64);
 
