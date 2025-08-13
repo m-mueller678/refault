@@ -4,7 +4,7 @@ use crate::{
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
 };
-use futures::{Sink, SinkExt, Stream, never::Never};
+use futures::{Sink, Stream, never::Never};
 use futures_channel::mpsc;
 use std::{
     any::{Any, TypeId},
@@ -99,17 +99,6 @@ impl PacketNetwork {
             pre_next_id: 0,
         }
     }
-
-    fn enqueue_message(&mut self, packet: WrappedPacket) {
-        let key = (
-            packet.dst,
-            packet_type_id(&*packet.content),
-            packet.dst_port,
-        );
-        if let Some(r) = self.receivers.get_mut(&key) {
-            r.send(packet);
-        }
-    }
 }
 
 impl Simulator for PacketNetwork {}
@@ -162,7 +151,12 @@ impl Sink<HalfPacket> for DefaultSocket {
                     let handle = this.simulator.clone();
                     spawn(async move {
                         sleep_until(deliver_at).await;
-                        handle.with(|net| net.enqueue_message(msg));
+                        handle.with(|net| {
+                            let key = (msg.dst, packet_type_id(&*msg.content), msg.dst_port);
+                            if let Some(r) = net.receivers.get_mut(&key) {
+                                r.unbounded_send(msg).unwrap();
+                            }
+                        });
                     });
                     Ok(())
                 }
@@ -274,8 +268,6 @@ pin_project_lite::pin_project! {
 
 pub struct SocketBox<Receive: Packet> {
     inner: Pin<Box<dyn Socket>>,
-    port: u64,
-    src: NodeId,
     _p: PhantomData<fn() -> Receive>,
 }
 
@@ -338,8 +330,6 @@ impl<Receive: Packet> SocketBox<Receive> {
                 .open(TypeId::of::<Receive>(), port)
                 .map(|inner| SocketBox {
                     inner,
-                    port,
-                    src: NodeId::current(),
                     _p: PhantomData,
                 })
         })

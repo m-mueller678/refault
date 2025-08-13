@@ -19,6 +19,7 @@ thread_local! {
         rng:RefCell::new(None),
         time:Cell::new(None),
         queue:RefCell::new(None),
+        pre_next_global_id:Cell::new(0),
     }};
 }
 
@@ -48,6 +49,7 @@ pub struct Context2 {
     pub rng: RefCell<Option<ChaCha12Rng>>,
     pub time: Cell<Option<Duration>>,
     pub queue: RefCell<Option<ExecutorQueue>>,
+    pre_next_global_id: Cell<u64>,
 }
 
 impl Context2 {
@@ -68,6 +70,12 @@ impl Context2 {
 
     pub fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
         f(self.context.borrow_mut().as_mut().unwrap())
+    }
+
+    pub fn gen_id(&self) -> u64 {
+        let id = self.pre_next_global_id.get() + 1;
+        self.pre_next_global_id.set(id);
+        id
     }
 }
 
@@ -92,6 +100,7 @@ impl Context {
                  time,
                  rng,
                  queue,
+                 pre_next_global_id,
              }| {
                 assert!(time.replace(Some(start_time)).is_none());
                 assert!(
@@ -110,6 +119,7 @@ impl Context {
                     simulators_by_type: HashMap::new(),
                 };
                 assert!(context.borrow_mut().replace(new_context).is_none());
+                assert!(pre_next_global_id.get() == 0);
             },
         );
         init_fn();
@@ -120,6 +130,7 @@ impl Context {
                  queue,
                  rng,
                  time,
+                 pre_next_global_id: _,
              }| {
                 time.take().unwrap();
                 rng.take().unwrap();

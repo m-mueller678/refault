@@ -1,34 +1,18 @@
+use crate::{
+    context::NodeId,
+    packet_network::{Packet, SocketBox},
+    runtime::gen_id,
+};
+use futures::{Sink, SinkExt, Stream, StreamExt, stream};
 use std::{
-    collections::{HashMap, hash_map::Entry},
     io::Error,
     marker::PhantomData,
     pin::Pin,
     task::{Poll, ready},
 };
 
-use futures::{Sink, SinkExt, Stream, StreamExt, stream};
-
-use crate::{
-    context::NodeId,
-    packet_network::{Packet, SocketBox},
-    simulator::{Simulator, simulator},
-};
-
-impl Simulator for Sim {}
-struct Sim {
-    next_id: u64,
-}
-
-impl Sim {
-    fn next_id(&mut self) -> u64 {
-        self.next_id += 1;
-        self.next_id
-    }
-}
-
-struct WithId<T> {
-    x: T,
-    id: u64,
+fn gen_high_port() -> u64 {
+    gen_id() + 1 << 16
 }
 
 struct Request<A, B> {
@@ -51,43 +35,38 @@ pub struct ServerConnection<A: 'static, B: 'static> {
 }
 
 async fn listen_next<A: 'static, B: 'static>(
-    mut socket: &mut SocketBox<Request<A, B>>,
+    socket: &mut SocketBox<Request<A, B>>,
 ) -> Result<(NodeId, u64), Error> {
     let request = socket.next().await.unwrap()?;
     debug_assert!(request.2.request.is_none());
     Ok((request.0, request.1))
 }
 
-async fn listen<A: 'static, B: 'static>(
+pub fn listen<A: 'static, B: 'static>(
     port: u16,
 ) -> Result<impl Stream<Item = Result<ServerConnection<A, B>, Error>>, Error> {
     let socket = SocketBox::<Request<A, B>>::new(port as u64)?;
-    let sim = simulator::<Sim>();
-    Ok(stream::try_unfold(socket, move |mut socket| {
-        let sim = sim.clone();
-        async move {
-            let (node, port) = listen_next(&mut socket).await?;
-            let connection_id = sim.with(|x| x.next_id());
-            let mut con_socket = SocketBox::new(port)?;
-            con_socket
-                .feed((
-                    node,
-                    port,
-                    Response::<A, B> {
-                        response: None,
-                        _p: PhantomData,
-                    },
-                ))
-                .await?;
-            Ok(Some((
-                (ServerConnection {
-                    remote_node: node,
-                    remote_port: port,
-                    socket: con_socket,
-                }),
-                socket,
-            )))
-        }
+    Ok(stream::try_unfold(socket, |mut socket| async move {
+        let (node, port) = listen_next(&mut socket).await?;
+        let mut con_socket = SocketBox::new(gen_high_port())?;
+        con_socket
+            .feed((
+                node,
+                port,
+                Response::<A, B> {
+                    response: None,
+                    _p: PhantomData,
+                },
+            ))
+            .await?;
+        Ok(Some((
+            (ServerConnection {
+                remote_node: node,
+                remote_port: port,
+                socket: con_socket,
+            }),
+            socket,
+        )))
     }))
 }
 
@@ -149,8 +128,7 @@ pub struct ClientConnection<A: 'static, B: 'static> {
 
 impl<A: 'static, B: 'static> ClientConnection<A, B> {
     pub async fn new(node: NodeId, port: u16) -> Result<Self, Error> {
-        let mut socket =
-            SocketBox::<Response<A, B>>::new(simulator::<Sim>().with(|s| s.next_id()))?;
+        let mut socket = SocketBox::<Response<A, B>>::new(gen_high_port())?;
         socket
             .send((
                 node,
@@ -160,7 +138,7 @@ impl<A: 'static, B: 'static> ClientConnection<A, B> {
                     _p: PhantomData,
                 },
             ))
-            .await;
+            .await?;
         let response = socket.next().await.unwrap()?;
         debug_assert!(response.2.response.is_none());
         debug_assert!(response.0 == node);
