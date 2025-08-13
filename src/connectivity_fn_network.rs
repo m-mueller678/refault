@@ -1,6 +1,6 @@
 use crate::{
     context::NodeId,
-    packet_network::{HalfPacket, NetworkBox, NetworkTrait, Packet, Socket, packet_type_id},
+    packet_network::{Addr, Addressed, NetworkBox, NetworkTrait, Packet, Socket, packet_type_id},
     runtime::{Id, spawn},
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
@@ -19,34 +19,26 @@ use std::{
 
 pub trait ConnectivityFunction: 'static {
     fn send_connectivity(&mut self, packet: &WrappedPacket) -> SendConnectivity;
-    fn pre_receive_connectivity(&mut self, dst: NodeId, port: Id) -> PreReceiveConnectivity;
+    fn pre_receive_connectivity(&mut self, dst: Addr) -> PreReceiveConnectivity;
     fn receive_connectivity(&mut self, packet: &WrappedPacket) -> ReceiveConnectivity;
 }
 
 pub struct WrappedPacket {
-    pub src_port: Id,
-    pub dst_port: Id,
-    pub src: NodeId,
-    pub dst: NodeId,
-    pub id: Id,
-    pub content: Box<dyn Packet>,
+    src: Addr,
+    dst: Addr,
+    id: Id,
+    content: Box<dyn Packet>,
 }
 
 impl WrappedPacket {
     pub fn content(&self) -> &dyn Packet {
         &*self.content
     }
-    pub fn dst_port(&self) -> Id {
-        self.dst_port
+    pub fn dst(&self) -> &Addr {
+        &self.dst
     }
-    pub fn src_port(&self) -> Id {
-        self.src_port
-    }
-    pub fn src(&self) -> NodeId {
-        self.src
-    }
-    pub fn dst(&self) -> NodeId {
-        self.dst
+    pub fn src(&self) -> &Addr {
+        &self.src
     }
     pub fn id(&self) -> Id {
         self.id
@@ -75,7 +67,7 @@ pub enum ReceiveConnectivity {
 
 pub struct PacketNetwork<C: ConnectivityFunction> {
     connectivity: C,
-    receivers: HashMap<(NodeId, TypeId, Id), mpsc::UnboundedSender<WrappedPacket>>,
+    receivers: HashMap<(Addr, TypeId), mpsc::UnboundedSender<WrappedPacket>>,
 }
 
 pub fn network_from_connectivity(connectivity: impl ConnectivityFunction + 'static) -> NetworkBox {
@@ -88,7 +80,7 @@ pub fn network_from_connectivity(connectivity: impl ConnectivityFunction + 'stat
 impl<T: ConnectivityFunction> Simulator for PacketNetwork<T> {}
 impl<C: ConnectivityFunction> Socket for DefaultSocket<C> {}
 
-impl<C: ConnectivityFunction> Sink<HalfPacket> for DefaultSocket<C> {
+impl<C: ConnectivityFunction> Sink<Addressed> for DefaultSocket<C> {
     type Error = Error;
 
     fn poll_ready(
@@ -98,17 +90,15 @@ impl<C: ConnectivityFunction> Sink<HalfPacket> for DefaultSocket<C> {
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(self: Pin<&mut Self>, item: HalfPacket) -> Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: Addressed) -> Result<(), Self::Error> {
         let this = self.project();
         debug_assert_eq!(packet_type_id(&*item.content), *this.ty);
-        debug_assert_eq!(*this.node, NodeId::current());
+        debug_assert_eq!(this.local_addr.node, NodeId::current());
         this.simulator.with(|net| {
             let msg = WrappedPacket {
                 id: Id::new(),
-                src: *this.node,
-                src_port: *this.port,
-                dst: item.node,
-                dst_port: item.port,
+                src: *this.local_addr,
+                dst: item.addr,
                 content: item.content,
             };
             match net.connectivity.send_connectivity(&msg) {
@@ -119,7 +109,7 @@ impl<C: ConnectivityFunction> Sink<HalfPacket> for DefaultSocket<C> {
                     spawn(async move {
                         sleep_until(deliver_at).await;
                         handle.with(|net| {
-                            let key = (msg.dst, packet_type_id(&*msg.content), msg.dst_port);
+                            let key = (msg.dst, packet_type_id(&*msg.content));
                             if let Some(r) = net.receivers.get_mut(&key) {
                                 r.unbounded_send(msg).unwrap();
                             }
@@ -147,7 +137,7 @@ impl<C: ConnectivityFunction> Sink<HalfPacket> for DefaultSocket<C> {
 }
 
 impl<C: ConnectivityFunction> Stream for DefaultSocket<C> {
-    type Item = Result<HalfPacket, Error>;
+    type Item = Result<Addressed, Error>;
 
     fn poll_next(
         self: Pin<&mut Self>,
@@ -155,19 +145,15 @@ impl<C: ConnectivityFunction> Stream for DefaultSocket<C> {
     ) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         this.simulator.with(|net| {
-            match net
-                .connectivity
-                .pre_receive_connectivity(*this.node, *this.port)
-            {
+            match net.connectivity.pre_receive_connectivity(*this.local_addr) {
                 PreReceiveConnectivity::Continue => (),
                 PreReceiveConnectivity::Error { error } => return Poll::Ready(Some(Err(error))),
             }
             loop {
                 let msg = ready!(this.recv.as_mut().poll_next(cx)).unwrap();
                 break Poll::Ready(Some(match net.connectivity.receive_connectivity(&msg) {
-                    ReceiveConnectivity::Receive => Ok(HalfPacket {
-                        port: msg.src_port,
-                        node: msg.src,
+                    ReceiveConnectivity::Receive => Ok(Addressed {
+                        addr: msg.src,
                         content: msg.content,
                     }),
                     ReceiveConnectivity::ErrorDiscard { error } => Err(error),
@@ -182,16 +168,18 @@ impl<C: ConnectivityFunction> Stream for DefaultSocket<C> {
 
 impl<C: ConnectivityFunction> NetworkTrait for PacketNetwork<C> {
     fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn Socket>>, Error> {
-        let node = NodeId::current();
-        let Entry::Vacant(x) = self.receivers.entry((node, ty, port)) else {
+        let local_addr = Addr {
+            port,
+            node: NodeId::current(),
+        };
+        let Entry::Vacant(x) = self.receivers.entry((local_addr, ty)) else {
             return Err(Error::new(ErrorKind::AddrInUse, "address in use"));
         };
         let (s, recv) = mpsc::unbounded();
         x.insert(s);
         Ok(Box::pin(DefaultSocket::<C> {
-            port,
+            local_addr,
             ty,
-            node,
             recv,
             simulator: simulator(),
         }))
@@ -199,21 +187,18 @@ impl<C: ConnectivityFunction> NetworkTrait for PacketNetwork<C> {
 }
 
 pin_project_lite::pin_project! {
-    struct DefaultSocket <C: ConnectivityFunction>{
+    struct DefaultSocket<C: ConnectivityFunction> {
         #[pin]
         recv: mpsc::UnboundedReceiver<WrappedPacket>,
         simulator: SimulatorHandle<PacketNetwork<C>>,
-        ty:TypeId,
-        node:NodeId,
-        port:Id,
+        ty: TypeId,
+        local_addr: Addr,
     }
 
-    impl<C:ConnectivityFunction> PinnedDrop for DefaultSocket <C>{
-        fn drop(this:Pin<&mut Self>) {
+    impl<C: ConnectivityFunction> PinnedDrop for DefaultSocket<C> {
+        fn drop(this: Pin<&mut Self>) {
             this.simulator.with(|net| {
-                net.receivers
-                    .remove(&(this.node, this.ty, this.port))
-                    .unwrap();
+                net.receivers.remove(&(this.local_addr, this.ty)).unwrap();
             })
         }
     }

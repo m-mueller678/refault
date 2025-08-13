@@ -16,10 +16,20 @@ pub trait Packet: Any {}
 impl Packet for () {}
 impl Packet for Never {}
 
-pub struct HalfPacket {
-    pub port: Id,
+/// An address in the simulated network.
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
+pub struct Addr {
     pub node: NodeId,
-    pub content: Box<dyn Packet>,
+    pub port: Id,
+}
+
+/// A network packet along with an address
+///
+/// When returned from a receiving function, the address refers to the sender.
+/// When passed into a transmitting function, it refers to the recipient.
+pub struct Addressed<T = Box<dyn Packet>> {
+    pub addr: Addr,
+    pub content: T,
 }
 
 pub fn packet_type_id(p: &dyn Packet) -> TypeId {
@@ -38,10 +48,7 @@ pub trait NetworkTrait: Simulator {
     fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn Socket>>, Error>;
 }
 
-pub trait Socket:
-    Stream<Item = Result<HalfPacket, Error>> + Sink<HalfPacket, Error = Error>
-{
-}
+pub trait Socket: Stream<Item = Result<Addressed, Error>> + Sink<Addressed, Error = Error> {}
 
 impl Simulator for NetworkBox {
     fn create_node(&mut self) {
@@ -63,25 +70,22 @@ pub struct SocketBox<Receive: Packet> {
 }
 
 impl<Receive: Packet> Stream for SocketBox<Receive> {
-    type Item = Result<(NodeId, Id, Receive), Error>;
+    type Item = Result<Addressed<Receive>, Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         self.inner.as_mut().poll_next(cx).map(|x| {
-            Some(x.unwrap().map(|x| {
-                (
-                    x.node,
-                    x.port,
-                    *(x.content as Box<dyn Any>).downcast().unwrap(),
-                )
+            Some(x.unwrap().map(|x| Addressed {
+                addr: x.addr,
+                content: *(x.content as Box<dyn Any>).downcast().unwrap(),
             }))
         })
     }
 }
 
-impl<Receive: Packet, A: Packet> Sink<(NodeId, Id, A)> for SocketBox<Receive> {
+impl<Receive: Packet, A: Packet> Sink<Addressed<A>> for SocketBox<Receive> {
     type Error = Error;
 
     fn poll_ready(
@@ -91,11 +95,10 @@ impl<Receive: Packet, A: Packet> Sink<(NodeId, Id, A)> for SocketBox<Receive> {
         self.inner.as_mut().poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: (NodeId, Id, A)) -> Result<(), Self::Error> {
-        self.inner.as_mut().start_send(HalfPacket {
-            node: item.0,
-            port: item.1,
-            content: Box::new(item.2),
+    fn start_send(mut self: Pin<&mut Self>, item: Addressed<A>) -> Result<(), Self::Error> {
+        self.inner.as_mut().start_send(Addressed {
+            addr: item.addr,
+            content: Box::new(item.content),
         })
     }
 
