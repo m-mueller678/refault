@@ -1,5 +1,5 @@
 use crate::{
-    packet_network::{Addr, Addressed, Packet, SocketBox},
+    packet_network::{Addr, Addressed, Packet, Socket},
     runtime::Id,
 };
 use futures::{Sink, SinkExt, Stream, StreamExt, stream};
@@ -24,12 +24,12 @@ impl<A: 'static, B: 'static> Packet for Request<A, B> {}
 impl<A: 'static, B: 'static> Packet for Response<A, B> {}
 
 pub struct ServerConnection<A: 'static, B: 'static> {
-    socket: SocketBox<Request<A, B>>,
+    socket: Socket<Request<A, B>>,
     remote_addr: Addr,
 }
 
 async fn listen_next<A: 'static, B: 'static>(
-    socket: &mut SocketBox<Request<A, B>>,
+    socket: &mut Socket<Request<A, B>>,
 ) -> Result<Addr, Error> {
     let request = socket.next().await.unwrap()?;
     debug_assert!(request.content.request.is_none());
@@ -39,10 +39,10 @@ async fn listen_next<A: 'static, B: 'static>(
 pub fn listen<A: 'static, B: 'static>(
     port: Id,
 ) -> Result<impl Stream<Item = Result<ServerConnection<A, B>, Error>>, Error> {
-    let socket = SocketBox::<Request<A, B>>::new(port)?;
+    let socket = Socket::<Request<A, B>>::new(port)?;
     Ok(stream::try_unfold(socket, |mut socket| async move {
         let addr = listen_next(&mut socket).await?;
-        let mut con_socket = SocketBox::new(Id::new())?;
+        let mut con_socket = Socket::new(Id::new())?;
         con_socket
             .feed(Addressed {
                 addr,
@@ -112,13 +112,13 @@ impl<A: 'static, B: 'static> Sink<B> for ServerConnection<A, B> {
 }
 
 pub struct ClientConnection<A: 'static, B: 'static> {
-    socket: SocketBox<Response<A, B>>,
+    socket: Socket<Response<A, B>>,
     remote_addr: Addr,
 }
 
 impl<A: 'static, B: 'static> ClientConnection<A, B> {
     pub async fn new(remote_addr: Addr) -> Result<Self, Error> {
-        let mut socket = SocketBox::<Response<A, B>>::new(Id::new())?;
+        let mut socket = Socket::<Response<A, B>>::new(Id::new())?;
         socket
             .send(Addressed {
                 addr: remote_addr,

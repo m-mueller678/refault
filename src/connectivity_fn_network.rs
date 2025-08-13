@@ -1,6 +1,8 @@
 use crate::{
     context::NodeId,
-    packet_network::{Addr, Addressed, NetworkBox, NetworkTrait, Packet, Socket, packet_type_id},
+    packet_network::{
+        Addr, Addressed, BackendSocket, NetworkBackend, NetworkBox, Packet, packet_type_id,
+    },
     runtime::{Id, spawn},
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
@@ -23,6 +25,9 @@ pub trait ConnectivityFunction: 'static {
     fn receive_connectivity(&mut self, packet: &WrappedPacket) -> ReceiveConnectivity;
 }
 
+/// A Packet with sender and recipient address and a unique packet id.
+///
+/// This is passed to a [ConnectivityFunction] for inspection.
 pub struct WrappedPacket {
     src: Addr,
     dst: Addr,
@@ -45,12 +50,14 @@ impl WrappedPacket {
     }
 }
 
+/// See [ConnectivityFunction::send_connectivity].
 pub enum SendConnectivity {
     Drop,
     Error { error: Error },
     Deliver { deliver_at: Instant },
 }
 
+/// See [ConnectivityFunction::pre_receive_connectivity].
 pub enum PreReceiveConnectivity {
     /// Receive a packet if any, wait otherwise.
     Continue,
@@ -59,28 +66,30 @@ pub enum PreReceiveConnectivity {
     Error { error: Error },
 }
 
+/// See [ConnectivityFunction::receive_connectivity].
 pub enum ReceiveConnectivity {
     Receive,
     ErrorDiscard { error: Error },
     SilentDiscard,
 }
 
-pub struct PacketNetwork<C: ConnectivityFunction> {
+struct ConNet<C: ConnectivityFunction> {
     connectivity: C,
     receivers: HashMap<(Addr, TypeId), mpsc::UnboundedSender<WrappedPacket>>,
 }
 
+/// Create a network based on the connectivity function.
 pub fn network_from_connectivity(connectivity: impl ConnectivityFunction + 'static) -> NetworkBox {
-    NetworkBox::new(PacketNetwork {
+    NetworkBox::new(ConNet {
         connectivity,
         receivers: HashMap::default(),
     })
 }
 
-impl<T: ConnectivityFunction> Simulator for PacketNetwork<T> {}
-impl<C: ConnectivityFunction> Socket for DefaultSocket<C> {}
+impl<T: ConnectivityFunction> Simulator for ConNet<T> {}
+impl<C: ConnectivityFunction> BackendSocket for ConNetSocket<C> {}
 
-impl<C: ConnectivityFunction> Sink<Addressed> for DefaultSocket<C> {
+impl<C: ConnectivityFunction> Sink<Addressed> for ConNetSocket<C> {
     type Error = Error;
 
     fn poll_ready(
@@ -136,7 +145,7 @@ impl<C: ConnectivityFunction> Sink<Addressed> for DefaultSocket<C> {
     }
 }
 
-impl<C: ConnectivityFunction> Stream for DefaultSocket<C> {
+impl<C: ConnectivityFunction> Stream for ConNetSocket<C> {
     type Item = Result<Addressed, Error>;
 
     fn poll_next(
@@ -166,8 +175,8 @@ impl<C: ConnectivityFunction> Stream for DefaultSocket<C> {
     }
 }
 
-impl<C: ConnectivityFunction> NetworkTrait for PacketNetwork<C> {
-    fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn Socket>>, Error> {
+impl<C: ConnectivityFunction> NetworkBackend for ConNet<C> {
+    fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn BackendSocket>>, Error> {
         let local_addr = Addr {
             port,
             node: NodeId::current(),
@@ -177,7 +186,7 @@ impl<C: ConnectivityFunction> NetworkTrait for PacketNetwork<C> {
         };
         let (s, recv) = mpsc::unbounded();
         x.insert(s);
-        Ok(Box::pin(DefaultSocket::<C> {
+        Ok(Box::pin(ConNetSocket::<C> {
             local_addr,
             ty,
             recv,
@@ -187,15 +196,15 @@ impl<C: ConnectivityFunction> NetworkTrait for PacketNetwork<C> {
 }
 
 pin_project_lite::pin_project! {
-    struct DefaultSocket<C: ConnectivityFunction> {
+    struct ConNetSocket<C: ConnectivityFunction> {
         #[pin]
         recv: mpsc::UnboundedReceiver<WrappedPacket>,
-        simulator: SimulatorHandle<PacketNetwork<C>>,
+        simulator: SimulatorHandle<ConNet<C>>,
         ty: TypeId,
         local_addr: Addr,
     }
 
-    impl<C: ConnectivityFunction> PinnedDrop for DefaultSocket<C> {
+    impl<C: ConnectivityFunction> PinnedDrop for ConNetSocket<C> {
         fn drop(this: Pin<&mut Self>) {
             this.simulator.with(|net| {
                 net.receivers.remove(&(this.local_addr, this.ty)).unwrap();

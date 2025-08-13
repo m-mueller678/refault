@@ -23,7 +23,7 @@ pub struct Addr {
     pub port: Id,
 }
 
-/// A network packet along with an address
+/// A network packet along with an address.
 ///
 /// When returned from a receiving function, the address refers to the sender.
 /// When passed into a transmitting function, it refers to the recipient.
@@ -32,23 +32,29 @@ pub struct Addressed<T = Box<dyn Packet>> {
     pub content: T,
 }
 
+/// Get the TypeId of a packet.
+///
+/// Using this prevents you from accidentally ending up with the TypeId of `Box<dyn Packet>` rather than the id of the contained value.
 pub fn packet_type_id(p: &dyn Packet) -> TypeId {
     (*p).type_id()
 }
 
-pub struct NetworkBox(Box<dyn NetworkTrait>);
+pub struct NetworkBox(Box<dyn NetworkBackend>);
 
 impl NetworkBox {
-    pub fn new<T: NetworkTrait>(inner: T) -> Self {
+    pub fn new<T: NetworkBackend>(inner: T) -> Self {
         NetworkBox(Box::new(inner))
     }
 }
 
-pub trait NetworkTrait: Simulator {
-    fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn Socket>>, Error>;
+pub trait NetworkBackend: Simulator {
+    fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn BackendSocket>>, Error>;
 }
 
-pub trait Socket: Stream<Item = Result<Addressed, Error>> + Sink<Addressed, Error = Error> {}
+pub trait BackendSocket:
+    Stream<Item = Result<Addressed, Error>> + Sink<Addressed, Error = Error>
+{
+}
 
 impl Simulator for NetworkBox {
     fn create_node(&mut self) {
@@ -64,12 +70,12 @@ impl Simulator for NetworkBox {
     }
 }
 
-pub struct SocketBox<Receive: Packet> {
-    inner: Pin<Box<dyn Socket>>,
+pub struct Socket<Receive: Packet> {
+    inner: Pin<Box<dyn BackendSocket>>,
     _p: PhantomData<fn() -> Receive>,
 }
 
-impl<Receive: Packet> Stream for SocketBox<Receive> {
+impl<Receive: Packet> Stream for Socket<Receive> {
     type Item = Result<Addressed<Receive>, Error>;
 
     fn poll_next(
@@ -85,7 +91,7 @@ impl<Receive: Packet> Stream for SocketBox<Receive> {
     }
 }
 
-impl<Receive: Packet, A: Packet> Sink<Addressed<A>> for SocketBox<Receive> {
+impl<Receive: Packet, A: Packet> Sink<Addressed<A>> for Socket<Receive> {
     type Error = Error;
 
     fn poll_ready(
@@ -117,12 +123,12 @@ impl<Receive: Packet, A: Packet> Sink<Addressed<A>> for SocketBox<Receive> {
     }
 }
 
-impl<Receive: Packet> SocketBox<Receive> {
+impl<Receive: Packet> Socket<Receive> {
     pub fn new(port: Id) -> Result<Self, Error> {
         simulator::<NetworkBox>().with(|net| {
             net.0
                 .open(TypeId::of::<Receive>(), port)
-                .map(|inner| SocketBox {
+                .map(|inner| Socket {
                     inner,
                     _p: PhantomData,
                 })
