@@ -10,7 +10,10 @@
 
 use std::{
     any::{Any, TypeId, type_name},
+    cell::RefCell,
+    marker::PhantomData,
     mem,
+    rc::Rc,
 };
 
 use crate::context::{Context2, NodeId, with_context};
@@ -70,14 +73,50 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
     }
 }
 
-/// Call `f` with a mutable reference to the simulator.
+pub struct SimulatorHandle<S: Simulator>(PhantomData<Rc<RefCell<S>>>);
+
+impl<S: Simulator> Clone for SimulatorHandle<S> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+
+/// Get a handle for the simulator
 ///
 /// Panics if no simulator of this type has been added.
-pub fn with_simulator<S: Simulator, R>(f: impl FnOnce(&mut S) -> R) -> R {
-    with_simulator_option(|mut x| {
-        f(x.as_mut()
-            .unwrap_or_else(|| panic!("simulator does not exist: {}", type_name::<S>())))
-    })
+pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
+    with_context(|cx| {
+        if !cx.simulators_by_type.contains_key(&TypeId::of::<S>()) {
+            panic!("simulator does not exist: {}", type_name::<S>());
+        }
+    });
+    SimulatorHandle(PhantomData)
+}
+
+impl<S: Simulator> SimulatorHandle<S> {
+    /// Call `f` with a mutable reference to the simulator.
+    ///
+    /// This acquires an exclusive lock on the simulator.
+    /// Attempting to acquire another reference to the same simulator within `f` will panic.
+    pub fn with<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
+        with_simulator_option(|mut x| f(x.as_mut().unwrap()))
+    }
+}
+
+impl<S: NodeSimulator> SimulatorHandle<PerNode<S>> {
+    /// Call `f` with a mutable reference to the node simulator of the specified node.
+    ///
+    /// See [Self::with] for concerns about locking.
+    pub fn with_node<R>(&self, node: NodeId, f: impl FnOnce(&mut S) -> R) -> R {
+        self.with(|s| f(&mut s.simulators[node.0]))
+    }
+
+    /// Call `f` with a mutable reference to the node simulator of the current node.
+    ///
+    /// See [Self::with] for concerns about locking.
+    pub fn with_current_node<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
+        self.with_node(NodeId::current(), f)
+    }
 }
 
 pub(crate) fn for_all_simulators(forward: bool, mut f: impl FnMut(&mut dyn Simulator)) {
@@ -108,20 +147,38 @@ pub(crate) fn for_all_simulators(forward: bool, mut f: impl FnMut(&mut dyn Simul
 /// A node-scoped singleton.
 ///
 /// This is a node-scoped version of [Simulator].
-/// Adding a `NodeSimulator` to a simulation is like adding a `Simulator` that holds one `NodeSimulator` object for each node.
+/// Use this together with [PerNode].
 pub trait NodeSimulator: 'static {
     fn stop_node(&mut self);
     fn start_node(&mut self);
-    fn new() -> Self;
 }
 
-struct NodeSimSim<S: NodeSimulator> {
+/// Node-scoped singletons.
+///
+/// This simulator contains one `NodeSimulator` for each node in the simulation.
+/// The node simulators can be accessed using [SimulatorHandle::with_node] and [SimulatorHandle::with_current_node].
+pub struct PerNode<S> {
     simulators: Vec<S>,
+    new: Box<dyn FnMut() -> S>,
 }
 
-impl<S: NodeSimulator> Simulator for NodeSimSim<S> {
+impl<S> std::ops::Index<NodeId> for PerNode<S> {
+    type Output = S;
+
+    fn index(&self, index: NodeId) -> &Self::Output {
+        &self.simulators[index.0]
+    }
+}
+
+impl<S> std::ops::IndexMut<NodeId> for PerNode<S> {
+    fn index_mut(&mut self, index: NodeId) -> &mut Self::Output {
+        &mut self.simulators[index.0]
+    }
+}
+
+impl<S: NodeSimulator> Simulator for PerNode<S> {
     fn create_node(&mut self) {
-        self.simulators.push(S::new())
+        self.simulators.push((self.new)())
     }
 
     fn stop_node(&mut self) {
@@ -133,17 +190,11 @@ impl<S: NodeSimulator> Simulator for NodeSimSim<S> {
     }
 }
 
-/// Add a new node simulator.
-pub fn add_node_simulator<S: NodeSimulator>() {
-    debug_assert_eq!(NodeId::current(), NodeId::INIT);
-    add_simulator(NodeSimSim {
-        simulators: vec![S::new()],
-    });
-}
-
-/// Call `f` with a mutable reference to the node-simulator.
-///
-/// Panics if no node-simulator of this type has been added.
-pub fn with_node_simulator<S: NodeSimulator, R>(f: impl FnOnce(&mut S) -> R) -> R {
-    with_simulator::<NodeSimSim<S>, _>(|s| (f(&mut s.simulators[NodeId::current().0])))
+impl<S: NodeSimulator> PerNode<S> {
+    pub fn new(mut new: Box<dyn FnMut() -> S>) -> Self {
+        Self {
+            simulators: vec![new()],
+            new,
+        }
+    }
 }
