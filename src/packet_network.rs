@@ -20,7 +20,7 @@ pub trait Packet: Any {}
 impl Packet for () {}
 impl Packet for Never {}
 
-pub trait ConnectivityFunction {
+pub trait ConnectivityFunction: 'static {
     fn send_connectivity(&mut self, packet: &WrappedPacket) -> SendConnectivity;
     fn pre_receive_connectivity(&mut self, dst: NodeId, port: u64) -> PreReceiveConnectivity;
     fn receive_connectivity(&mut self, packet: &WrappedPacket) -> ReceiveConnectivity;
@@ -85,29 +85,33 @@ pub enum ReceiveConnectivity {
     SilentDiscard,
 }
 
-pub struct PacketNetwork {
-    connectivity: Box<dyn ConnectivityFunction>,
+pub struct PacketNetwork<C: ConnectivityFunction> {
+    connectivity: C,
     receivers: HashMap<(NodeId, TypeId, u64), mpsc::UnboundedSender<WrappedPacket>>,
     pre_next_id: u64,
 }
 
-impl PacketNetwork {
-    pub fn new(connectivity: impl ConnectivityFunction + 'static) -> Self {
-        PacketNetwork {
-            connectivity: Box::new(connectivity),
-            receivers: HashMap::default(),
-            pre_next_id: 0,
-        }
-    }
+pub fn network_from_connectivity(connectivity: impl ConnectivityFunction + 'static) -> NetworkBox {
+    NetworkBox::new(PacketNetwork {
+        connectivity,
+        receivers: HashMap::default(),
+        pre_next_id: 0,
+    })
 }
 
-impl Simulator for PacketNetwork {}
+impl<T: ConnectivityFunction> Simulator for PacketNetwork<T> {}
 
 pub fn packet_type_id(p: &dyn Packet) -> TypeId {
     (*p).type_id()
 }
 
 pub struct NetworkBox(Box<dyn NetworkTrait>);
+
+impl NetworkBox {
+    fn new<T: NetworkTrait>(inner: T) -> Self {
+        NetworkBox(Box::new(inner))
+    }
+}
 
 pub trait NetworkTrait: Simulator {
     fn open(&mut self, ty: TypeId, port: u64) -> Result<Pin<Box<dyn Socket>>, Error>;
@@ -118,9 +122,9 @@ pub trait Socket:
 {
 }
 
-impl Socket for DefaultSocket {}
+impl<C: ConnectivityFunction> Socket for DefaultSocket<C> {}
 
-impl Sink<HalfPacket> for DefaultSocket {
+impl<C: ConnectivityFunction> Sink<HalfPacket> for DefaultSocket<C> {
     type Error = Error;
 
     fn poll_ready(
@@ -179,7 +183,7 @@ impl Sink<HalfPacket> for DefaultSocket {
     }
 }
 
-impl Stream for DefaultSocket {
+impl<C: ConnectivityFunction> Stream for DefaultSocket<C> {
     type Item = Result<HalfPacket, Error>;
 
     fn poll_next(
@@ -227,7 +231,7 @@ impl Simulator for NetworkBox {
     }
 }
 
-impl NetworkTrait for PacketNetwork {
+impl<C: ConnectivityFunction> NetworkTrait for PacketNetwork<C> {
     fn open(&mut self, ty: TypeId, port: u64) -> Result<Pin<Box<dyn Socket>>, Error> {
         let node = NodeId::current();
         let Entry::Vacant(x) = self.receivers.entry((node, ty, port)) else {
@@ -235,7 +239,7 @@ impl NetworkTrait for PacketNetwork {
         };
         let (s, recv) = mpsc::unbounded();
         x.insert(s);
-        Ok(Box::pin(DefaultSocket {
+        Ok(Box::pin(DefaultSocket::<C> {
             port,
             ty,
             node,
@@ -246,16 +250,16 @@ impl NetworkTrait for PacketNetwork {
 }
 
 pin_project_lite::pin_project! {
-    struct DefaultSocket {
+    struct DefaultSocket <C: ConnectivityFunction>{
         #[pin]
         recv: mpsc::UnboundedReceiver<WrappedPacket>,
-        simulator: SimulatorHandle<PacketNetwork>,
+        simulator: SimulatorHandle<PacketNetwork<C>>,
         ty:TypeId,
         node:NodeId,
         port:u64,
     }
 
-    impl PinnedDrop for DefaultSocket {
+    impl<C:ConnectivityFunction> PinnedDrop for DefaultSocket <C>{
         fn drop(this:Pin<&mut Self>) {
             this.simulator.with(|net| {
                 net.receivers
