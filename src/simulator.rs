@@ -16,7 +16,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::context::{Context2, NodeId, with_context};
+use crate::context::{Context2, executor::NodeId, with_context};
 
 /// A simulation-scoped singleton.
 ///

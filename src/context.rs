@@ -2,9 +2,9 @@ pub mod executor;
 pub mod id;
 pub mod time;
 
-use crate::event::{Event, EventHandler};
+use crate::event::EventHandler;
 use crate::simulator::Simulator;
-use executor::{Executor, ExecutorQueue};
+use executor::{Executor, ExecutorQueue, NodeId};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
 use std::any::TypeId;
@@ -36,7 +36,6 @@ pub type SimulatorRc = Option<Box<dyn Simulator>>;
 
 pub struct Context {
     current_node: NodeId,
-    next_node_id: NodeId,
     executor: Executor,
     pub event_handler: Box<dyn EventHandler>,
     pub simulators_by_type: HashMap<TypeId, usize>,
@@ -74,73 +73,60 @@ impl Context2 {
     }
 }
 
-/// A unique identifier for a node within a simulation.
-#[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
-pub struct NodeId(pub(crate) usize);
+pub struct ContextInstallGuard(NotSendSync);
 
-impl NodeId {
-    pub(crate) const INIT: Self = NodeId(0);
-}
-
-impl Context {
-    pub fn run(
-        event_handler: Box<dyn EventHandler>,
-        seed: u64,
-        start_time: Duration,
-        init_fn: Box<dyn FnOnce() + '_>,
-    ) -> Box<dyn EventHandler> {
-        Context2::with(
-            |Context2 {
-                 context,
-                 time,
-                 rng,
-                 queue,
-                 pre_next_global_id,
-             }| {
-                assert!(time.replace(Some(start_time)).is_none());
-                assert!(
-                    rng.replace(Some(ChaCha12Rng::seed_from_u64(seed)))
-                        .is_none()
-                );
-                assert!(queue.borrow_mut().replace(ExecutorQueue::new()).is_none());
-                let new_context = Context {
-                    stopped: vec![false],
-                    current_node: NodeId::INIT,
-                    executor: queue.borrow_mut().as_mut().unwrap().executor(),
-                    next_node_id: NodeId(1),
-                    event_handler,
-                    // random is already deterministic at this point.
-                    simulators: Vec::new(),
-                    simulators_by_type: HashMap::new(),
-                };
-                assert!(context.borrow_mut().replace(new_context).is_none());
-                assert!(pre_next_global_id.get() == 0);
-            },
-        );
-        init_fn();
-        Executor::run_current_context();
-        let context = CONTEXT.with(
-            |Context2 {
-                 context,
-                 queue,
-                 rng,
-                 time,
-                 pre_next_global_id: _,
-             }| {
-                time.take().unwrap();
-                rng.take().unwrap();
-                assert!(queue.take().unwrap().is_empty());
-                context.borrow_mut().take().unwrap()
-            },
-        );
-        context.event_handler
+impl ContextInstallGuard {
+    pub fn new(event_handler: Box<dyn EventHandler>, seed: u64, start_time: Duration) -> Self {
+        Context2::with(|cx2| {
+            assert!(cx2.time.replace(Some(start_time)).is_none());
+            assert!(
+                cx2.rng
+                    .replace(Some(ChaCha12Rng::seed_from_u64(seed)))
+                    .is_none()
+            );
+            assert!(
+                cx2.queue
+                    .borrow_mut()
+                    .replace(ExecutorQueue::new())
+                    .is_none()
+            );
+            let new_context = Context {
+                stopped: vec![false],
+                current_node: NodeId::INIT,
+                executor: cx2.queue.borrow_mut().as_mut().unwrap().executor(),
+                event_handler,
+                // random is already deterministic at this point.
+                simulators: Vec::new(),
+                simulators_by_type: HashMap::new(),
+            };
+            assert!(cx2.context.borrow_mut().replace(new_context).is_none());
+            assert!(cx2.pre_next_global_id.get() == 0);
+        });
+        ContextInstallGuard(NotSendSync::default())
     }
 
-    pub fn new_node(&mut self) -> NodeId {
-        let id = self.next_node_id;
-        self.event_handler.handle_event(Event::NodeSpawned(id));
-        self.next_node_id.0 += 1;
-        id
+    pub fn destroy(&mut self) -> Option<Box<dyn EventHandler>> {
+        CONTEXT.with(|cx2| {
+            if cx2.time.get().is_none() {
+                return None;
+            }
+            assert!(cx2.queue.borrow().as_ref().unwrap().none_ready());
+            Executor::final_stop();
+            while let Some(x) = cx2.with_cx(|cx| cx.simulators.pop()) {
+                drop(x.unwrap())
+                //TODO prevent adding simulators after certain point
+            }
+            let Context { event_handler, .. } = cx2.context.take().unwrap();
+            cx2.time.take().unwrap();
+            cx2.rng.take().unwrap();
+            Some(event_handler)
+        })
+    }
+}
+
+impl Drop for ContextInstallGuard {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }
 

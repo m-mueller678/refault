@@ -1,7 +1,7 @@
 //! Controlling simulations, tasks and nodes.
-use crate::context::Context;
-pub use crate::context::NodeId;
+use crate::context::ContextInstallGuard;
 pub use crate::context::executor::{AbortHandle, TaskHandle, spawn};
+use crate::context::executor::{Executor, NodeId};
 pub use crate::context::id::Id;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
@@ -92,13 +92,14 @@ impl Runtime {
         thread::scope(|scope| {
             scope
                 .spawn(move || {
-                    Context::run(
+                    let mut context_guard = ContextInstallGuard::new(
                         event_handler,
                         self.seed,
                         self.simulation_start_time,
-                        init_fn,
-                    )
-                    .finalize()
+                    );
+                    init_fn();
+                    Executor::run_current_context();
+                    context_guard.destroy().unwrap().finalize()
                 })
                 .join()
                 .unwrap()

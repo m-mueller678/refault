@@ -1,9 +1,9 @@
-use crate::context::NodeId;
+use crate::{context::executor::NodeId, runtime::Id};
 use std::{sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Event {
-    TaskRun(usize),
+    TaskRun(Id),
     TimeAdvanced(Duration),
     NodeSpawned(NodeId),
     TaskSpawned,

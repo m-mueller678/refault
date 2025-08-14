@@ -3,7 +3,7 @@ use crate::event::Event;
 use crate::simulator::for_all_simulators;
 use crate::{
     context::time::TimeScheduler,
-    context::{Context2, NodeId, with_context},
+    context::{Context2, with_context},
 };
 use cooked_waker::{IntoWaker, WakeRef};
 use futures_channel::oneshot;
@@ -20,13 +20,14 @@ use std::{
 };
 
 use super::NotSendSync;
+use super::id::Id;
 
 pub struct ExecutorQueue {
-    ready_queue: VecDeque<usize>,
+    ready_queue: VecDeque<Id>,
 }
 
 impl ExecutorQueue {
-    pub fn is_empty(&self) -> bool {
+    pub fn none_ready(&self) -> bool {
         self.ready_queue.is_empty()
     }
 
@@ -38,9 +39,12 @@ impl ExecutorQueue {
 
     pub fn executor(&self) -> Executor {
         Executor {
+            final_stopped: false,
             tasks: HashMap::new(),
-            tasks_by_node: HashMap::new(),
-            next_task_id: 0,
+            nodes: vec![NodeData {
+                run_level: NodeRunLevel::Running,
+                tasks: HashSet::new(),
+            }],
             time_scheduler: TimeScheduler::new(),
         }
     }
@@ -50,10 +54,21 @@ pub struct Executor {
     // each entry corresponds to one TaskShared
     // entries are None while the task is executing, cancelled, or completed
     #[allow(clippy::type_complexity)]
-    tasks: HashMap<usize, TaskEntry>,
-    tasks_by_node: HashMap<NodeId, HashSet<usize>>,
-    next_task_id: usize,
+    tasks: HashMap<Id, TaskEntry>,
+    final_stopped: bool,
+    nodes: Vec<NodeData>,
     pub time_scheduler: TimeScheduler,
+}
+
+enum NodeRunLevel {
+    Running,
+    Stopped,
+    FinalStopped,
+}
+
+struct NodeData {
+    run_level: NodeRunLevel,
+    tasks: HashSet<Id>,
 }
 
 struct TaskEntry {
@@ -151,7 +166,7 @@ const TASK_END: usize = 4;
 
 struct TaskShared {
     state: AtomicUsize,
-    id: usize,
+    id: Id,
     node: NodeId,
 }
 
@@ -173,10 +188,22 @@ impl WakeRef for TaskShared {
 }
 
 impl Executor {
+    pub fn final_stop() {
+        with_context(|cx| cx.executor.final_stopped = true);
+        for n in NodeId::all() {
+            n.stop_inner(true);
+        }
+    }
+
     pub fn spawn<F: Future + 'static>(&mut self, node: NodeId, future: F) -> TaskHandle<F::Output> {
+        match self.nodes[node.0].run_level {
+            NodeRunLevel::Running => (),
+            NodeRunLevel::Stopped | NodeRunLevel::FinalStopped => {
+                panic!("node {node:?} is stopped")
+            }
+        }
         let (snd, rcv) = oneshot::channel();
-        let task_id = self.next_task_id;
-        self.next_task_id = self.next_task_id.checked_add(1).unwrap();
+        let task_id = Id::new();
         let task = Box::pin(Task {
             snd: Some(snd),
             fut: future,
@@ -196,18 +223,18 @@ impl Executor {
             droppable: false,
         };
         self.tasks.insert(task_id, task_entry);
-        self.tasks_by_node.entry(node).or_default().insert(task_id);
+        self.nodes[node.0].tasks.insert(task_id);
         <TaskShared as WakeRef>::wake_by_ref(&*task_handle.abort.0);
         task_handle
     }
 
-    fn remove_task_entry(&mut self, task_id: usize) {
+    fn remove_task_entry(&mut self, task_id: Id) {
         let removed = self.tasks.remove(&task_id);
         let task_entry = removed.unwrap();
         debug_assert_eq!(task_entry.shared.id, task_id);
         assert!(task_entry.task.into_inner().is_none());
-        let node = self.tasks_by_node.get_mut(&task_entry.shared.node).unwrap();
-        let removed = node.remove(&task_id);
+        let node = &mut self.nodes[task_entry.shared.node.0];
+        let removed = node.tasks.remove(&task_id);
         debug_assert!(removed);
     }
 
@@ -286,9 +313,9 @@ impl Executor {
 }
 
 fn abort_local(
-    task_id: usize,
+    task_id: Id,
     queue: &mut ExecutorQueue,
-    tasks: &mut HashMap<usize, TaskEntry>,
+    tasks: &mut HashMap<Id, TaskEntry>,
 ) -> Option<Pin<Box<dyn TaskDyn>>> {
     let task_entry = tasks.get_mut(&task_id).unwrap();
     match task_entry.shared.state.load(Relaxed) {
@@ -343,12 +370,30 @@ pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
     NodeId::current().spawn(future)
 }
 
+/// A unique identifier for a node within a simulation.
+#[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
+pub struct NodeId(pub(crate) usize);
+
 impl NodeId {
+    pub(crate) const INIT: Self = NodeId(0);
+
     /// Create a new node that tasks can be run on.
     ///
     /// Can only be called from within a simulation.
     pub fn create_node() -> NodeId {
-        with_context(|cx| cx.new_node())
+        with_context(|cx| {
+            let id = NodeId(cx.executor.nodes.len());
+            assert!(
+                !cx.executor.final_stopped,
+                "node spawn during simulation shutdown"
+            );
+            cx.executor.nodes.push(NodeData {
+                run_level: NodeRunLevel::Running,
+                tasks: HashSet::new(),
+            });
+            cx.event_handler.handle_event(Event::NodeSpawned(id));
+            id
+        })
     }
 
     /// Spawn a task on this node.
@@ -384,13 +429,40 @@ impl NodeId {
     /// Invoke Simulator::stop on all simulators and stop all tasks on this node.
     ///
     /// Attempting to spawn tasks on a stopped node will panic.
+    /// Attempting to stop a node that is already stopped does nothing.
     pub fn stop(self) {
+        self.stop_inner(false);
+    }
+
+    fn stop_inner(self, is_final: bool) {
         Context2::with_in_node(self, |cx2| {
+            let was_running = cx2.with_cx(|cx| {
+                let node = &mut cx.executor.nodes[self.0];
+                match node.run_level {
+                    NodeRunLevel::Running => {
+                        node.run_level = if is_final {
+                            NodeRunLevel::FinalStopped
+                        } else {
+                            NodeRunLevel::Stopped
+                        };
+                        true
+                    }
+                    NodeRunLevel::FinalStopped | NodeRunLevel::Stopped => {
+                        if is_final {
+                            node.run_level = NodeRunLevel::FinalStopped;
+                        }
+                        false
+                    }
+                }
+            });
+            if !was_running {
+                return;
+            }
             for_all_simulators(false, |x| x.stop_node());
             let task_ids = {
                 cx2.with_cx(|context| {
-                    let node = context.executor.tasks_by_node.get(&self);
-                    node.into_iter().flatten().copied().collect::<Vec<usize>>()
+                    let node = &mut context.executor.nodes[self.0];
+                    node.tasks.iter().copied().collect::<Vec<Id>>()
                 })
             };
             for &task in &task_ids {
@@ -407,6 +479,6 @@ impl NodeId {
 
     /// Iterate over all nodes in the current simulation.
     pub fn all() -> impl Iterator<Item = NodeId> {
-        (0..with_context(|cx| cx.next_node_id.0)).map(NodeId)
+        (0..with_context(|cx| cx.executor.nodes.len())).map(NodeId)
     }
 }
