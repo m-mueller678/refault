@@ -280,6 +280,11 @@ impl Executor {
                 let keep = task.as_mut().run();
                 cx2.with_cx(|cx| {
                     if keep {
+                        match task.as_base().state.load(Relaxed) {
+                            TASK_COMPLETE | TASK_END.. => unreachable!(),
+                            TASK_CANCELLED => (),
+                            TASK_WAITING | TASK_READY => {}
+                        }
                         let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
                         assert!(task_entry.task.replace(Some(task)).is_none());
                     } else {
