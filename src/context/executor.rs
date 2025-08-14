@@ -7,7 +7,6 @@ use crate::{
 use cooked_waker::{IntoWaker, WakeRef};
 use futures_channel::oneshot;
 use std::collections::HashSet;
-use std::mem;
 use std::sync::atomic::Ordering::Relaxed;
 use std::task::Poll;
 use std::{
@@ -194,7 +193,7 @@ impl Executor {
         }
     }
 
-    pub fn spawn<F: Future + 'static>(&mut self, node: NodeId, future: F) -> TaskHandle<F::Output> {
+    fn spawn<F: Future + 'static>(&mut self, node: NodeId, future: F) -> TaskHandle<F::Output> {
         match self.nodes[node.0].run_level {
             NodeRunLevel::Running => (),
             NodeRunLevel::Stopped | NodeRunLevel::FinalStopped => {
@@ -259,7 +258,7 @@ impl Executor {
                         }
                         TASK_CANCELLED => {
                             let id = task_entry.shared.id;
-                            (&mut cx.executor).remove_task_entry(id);
+                            cx.executor.remove_task_entry(id);
                             continue;
                         }
                         TASK_COMPLETE | TASK_WAITING | TASK_END.. => unreachable!(),
@@ -318,15 +317,14 @@ impl AbortHandle {
     }
 
     fn abort_inner(&self) {
-        drop(Context2::with_in_node(self.0.node, |cx| {
-            let mut queue_guard = cx.queue.borrow_mut();
-            let queue = queue_guard.as_mut().unwrap();
-            abort_local(
+        (Context2::with_in_node(self.0.node, |cx| {
+            let task = abort_local(
                 self.0.id,
-                queue,
+                cx.queue.borrow_mut().as_mut().unwrap(),
                 &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
-            )
-            // drop task outside all guards
+            );
+            // drop task after releasing locks in previus statement
+            drop(task);
         }));
     }
 }

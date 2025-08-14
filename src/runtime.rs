@@ -93,7 +93,7 @@ impl Runtime {
         thread::scope(|scope| {
             let result = thread::Builder::new()
                 .name("simulation".to_owned())
-                .spawn_scoped(&scope, move || {
+                .spawn_scoped(scope, move || {
                     let mut context_guard = ContextInstallGuard::new(
                         event_handler,
                         self.seed,

@@ -113,9 +113,7 @@ impl ContextInstallGuard {
     pub fn destroy(&mut self) -> Option<Box<dyn EventHandler>> {
         CONTEXT.with(|cx2| {
             debug_assert!(cx2.current_node() == NodeId::INIT);
-            if cx2.time.get().is_none() {
-                return None;
-            }
+            cx2.time.get()?;
             assert!(cx2.queue.borrow().as_ref().unwrap().none_ready() || std::thread::panicking());
             Executor::final_stop();
             while let Some(x) = cx2.with_cx(|cx| cx.simulators.pop()) {

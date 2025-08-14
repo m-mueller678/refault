@@ -14,6 +14,7 @@ use crate::event::{Event, EventHandler};
 use pin_arc::{PinRc, PinRcStorage};
 use priority_queue::PriorityQueue;
 use std::cell::Cell;
+use std::cmp::Reverse;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
@@ -63,10 +64,10 @@ impl Future for Sleep {
                     Poll::Ready(())
                 } else {
                     state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
-                    cx.executor
-                        .time_scheduler
-                        .upcoming_events
-                        .push(QueueEntry(state_storage.as_ref().create_handle()), instant);
+                    cx.executor.time_scheduler.upcoming_events.push(
+                        QueueEntry(state_storage.as_ref().create_handle()),
+                        Reverse(instant),
+                    );
                     Poll::Pending
                 }
             }),
@@ -81,7 +82,7 @@ impl Future for Sleep {
 }
 
 pub(crate) struct TimeScheduler {
-    upcoming_events: PriorityQueue<QueueEntry, Instant>,
+    upcoming_events: PriorityQueue<QueueEntry, Reverse<Instant>>,
     now: Instant,
 }
 
@@ -123,11 +124,11 @@ impl TimeScheduler {
         let Some(next) = self.upcoming_events.peek().map(|x| *x.1) else {
             return false;
         };
-        let dt = next.duration_since(self.now);
+        let dt = next.0.duration_since(self.now);
         event_handler.handle_event(Event::TimeAdvanced(dt));
         time.set(Some(time.get().unwrap() + dt));
-        self.now = next;
-        while let Some(x) = self.upcoming_events.pop_if(|_, t| *t <= self.now) {
+        self.now = next.0;
+        while let Some(x) = self.upcoming_events.pop_if(|_, t| t.0 <= self.now) {
             let TimeFutureState::Waiting(waker) = x.0.0.get_pin().replace(TimeFutureState::Done)
             else {
                 unreachable!();
