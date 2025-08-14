@@ -110,7 +110,7 @@ impl ContextInstallGuard {
             if cx2.time.get().is_none() {
                 return None;
             }
-            assert!(cx2.queue.borrow().as_ref().unwrap().none_ready());
+            assert!(cx2.queue.borrow().as_ref().unwrap().none_ready() || std::thread::panicking());
             Executor::final_stop();
             while let Some(x) = cx2.with_cx(|cx| cx.simulators.pop()) {
                 drop(x.unwrap())

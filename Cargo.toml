@@ -22,3 +22,4 @@ tarpc = { version = "0.37", optional = true }
 
 [dev-dependencies]
 scopeguard = "1.2"
+getrandom = "0.3.3"

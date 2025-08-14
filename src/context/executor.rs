@@ -127,7 +127,7 @@ pin_project_lite::pin_project! {
     impl<T> PinnedDrop for TaskHandle<T> {
         fn drop(this: Pin<&mut Self>) {
             assert!(
-                this.droppable,
+                this.droppable || std::thread::panicking(),
                 "TaskHandle dropped. You must call either abort or detach it."
             )
         }

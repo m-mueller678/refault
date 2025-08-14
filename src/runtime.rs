@@ -5,6 +5,7 @@ use crate::context::executor::{Executor, NodeId};
 pub use crate::context::id::Id;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
+use std::panic::resume_unwind;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -90,8 +91,9 @@ impl Runtime {
         // Run the simulation on a new thread to avoid thread local state on this thread interfering
         // with random number generation
         thread::scope(|scope| {
-            scope
-                .spawn(move || {
+            let result = thread::Builder::new()
+                .name("simulation".to_owned())
+                .spawn_scoped(&scope, move || {
                     let mut context_guard = ContextInstallGuard::new(
                         event_handler,
                         self.seed,
@@ -101,8 +103,12 @@ impl Runtime {
                     Executor::run_current_context();
                     context_guard.destroy().unwrap().finalize()
                 })
-                .join()
                 .unwrap()
+                .join();
+            match result {
+                Ok(x) => x,
+                Err(e) => resume_unwind(e),
+            }
         })
     }
 }

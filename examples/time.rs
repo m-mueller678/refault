@@ -1,20 +1,26 @@
-use chrono::{DateTime, Utc};
 use deterministic_simulation_core::{runtime::Runtime, time::sleep};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() {
     // Define custom start time of simulation
-    let runtime =
-        Runtime::default().with_simulation_start_time(UNIX_EPOCH + Duration::from_secs(3600 * 24));
+    let simulation_start_time = UNIX_EPOCH + Duration::from_secs(3600 * 24);
+    let runtime = Runtime::default().with_simulation_start_time(simulation_start_time);
 
     // Retrieve simulated time at different points in the simulation
-    runtime.run(|| async {
-        let now: DateTime<Utc> = SystemTime::now().into();
-        println!("{}", now);
+    runtime.run(move || async move {
+        let st1 = SystemTime::now();
+        let t1 = Instant::now();
+        println!("t1: {st1:?}");
 
-        sleep(Duration::from_secs(120)).await;
+        assert_eq!(simulation_start_time, st1);
+        let duration = Duration::from_secs(120);
+        sleep(duration).await;
 
-        let now2: DateTime<Utc> = SystemTime::now().into();
-        println!("{}", now2);
+        let st2 = SystemTime::now();
+        let t2 = Instant::now();
+        println!("t2: {st2:?}");
+
+        assert_eq!(st2.duration_since(st1).unwrap(), duration);
+        assert_eq!(t2.checked_duration_since(t1).unwrap(), duration);
     });
 }
