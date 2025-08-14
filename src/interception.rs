@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use crate::context::Context2;
 use rand::Rng;
 
@@ -12,15 +14,14 @@ unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isiz
                 buflen as isize
             }
         } else {
-            // Provide normal random number generation when not within a simulation
-            // This section has been compied from Madsim: https://github.com/madsim-rs/madsim/blob/main/madsim/src/sim/rand.rs
-            lazy_static::lazy_static! {
-                static ref GETRANDOM: unsafe extern "C" fn(buf: *mut u8, buflen: usize, flags: u32) -> isize = unsafe {
-                    let ptr = libc::dlsym(libc::RTLD_NEXT, c"getrandom".as_ptr() as _);
-                    assert!(!ptr.is_null());
-                    std::mem::transmute(ptr)
-                };
-            }
+            // forward to the real getrandom implementation. See man dlsym.
+            static GETRANDOM: LazyLock<
+                unsafe extern "C" fn(buf: *mut u8, buflen: usize, flags: u32) -> isize,
+            > = LazyLock::new(|| unsafe {
+                let ptr = libc::dlsym(libc::RTLD_NEXT, c"getrandom".as_ptr() as _);
+                assert!(!ptr.is_null());
+                std::mem::transmute(ptr)
+            });
             unsafe { GETRANDOM(buf, buflen, _flags) }
         }
     })
@@ -41,18 +42,17 @@ unsafe extern "C" fn clock_gettime(
                 0
             }
         } else {
-            // Provide normal time when not within a simulation
-            // This section has been compied from Madsim: https://github.com/madsim-rs/madsim/blob/main/madsim/src/sim/time/system_time.rs
-            lazy_static::lazy_static! {
-                static ref CLOCK_GETTIME: unsafe extern "C" fn(
+            // forward to the real clock_gettime implementation. See man dlsym.
+            static CLOCK_GETTIME: LazyLock<
+                unsafe extern "C" fn(
                     clockid: libc::clockid_t,
                     tp: *mut libc::timespec,
-                ) -> libc::c_int = unsafe {
-                    let ptr = libc::dlsym(libc::RTLD_NEXT, c"clock_gettime".as_ptr() as _);
-                    assert!(!ptr.is_null());
-                    std::mem::transmute(ptr)
-                };
-            }
+                ) -> libc::c_int,
+            > = LazyLock::new(|| unsafe {
+                let ptr = libc::dlsym(libc::RTLD_NEXT, c"clock_gettime".as_ptr() as _);
+                assert!(!ptr.is_null());
+                std::mem::transmute(ptr)
+            });
             unsafe { CLOCK_GETTIME(_clockid, tp) }
         }
     })
