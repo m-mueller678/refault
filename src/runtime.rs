@@ -51,7 +51,7 @@ impl Runtime {
     pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
         self.run_simulation(
             Box::new(|| {
-                NodeId::INIT.spawn(f());
+                NodeId::INIT.spawn(f()).detach();
             }),
             Box::new(NoopEventHandler),
         );
@@ -63,15 +63,15 @@ impl Runtime {
     /// See [run](Self::run) for details how the simulation is run.
     pub fn check_determinism<F: Future<Output = ()> + 'static>(
         &self,
-        mut f: impl FnMut() -> F + Send,
         iterations: usize,
+        mut f: impl FnMut() -> F + Send,
     ) {
         assert!(iterations > 1);
         let event_handler = RecordingEventHandler::new();
         let mut run_with_events = |events| {
             self.run_simulation(
                 Box::new(|| {
-                    NodeId::INIT.spawn(f());
+                    NodeId::INIT.spawn(f()).detach();
                 }),
                 events,
             )
