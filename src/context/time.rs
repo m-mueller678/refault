@@ -25,8 +25,18 @@ pin_project_lite::pin_project! {
         #[pin]
         state: PinRcStorage<Cell<TimeFutureState>>,
     }
-}
 
+    impl PinnedDrop for Sleep {
+        fn drop(this: Pin<&mut Self>) {
+            with_context(|cx| {
+                cx.executor
+                    .time_scheduler
+                    .upcoming_events
+                    .remove(&QueueEntry(this.project().state.as_ref().create_handle()));
+            });
+        }
+    }
+}
 enum TimeFutureState {
     Init(Instant),
     Waiting(Waker),

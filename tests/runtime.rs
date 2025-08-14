@@ -1,4 +1,5 @@
-use std::{collections::HashMap, time::Duration};
+use std::sync::atomic::Ordering::Relaxed;
+use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
 use deterministic_simulation_core::{
     runtime::{Id, Runtime},
@@ -14,4 +15,16 @@ fn id_hashmap() {
             sleep(Duration::from_secs(x)).await;
         }
     })
+}
+
+#[test]
+#[should_panic]
+fn global_state() {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    Runtime::new().check_determinism(2, || async {
+        sleep(Duration::from_secs(
+            1 + COUNTER.fetch_add(1, Relaxed) as u64,
+        ))
+        .await;
+    });
 }
