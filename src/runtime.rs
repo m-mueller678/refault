@@ -1,8 +1,8 @@
 //! Controlling simulations, tasks and nodes.
-use crate::context::ContextInstallGuard;
 pub use crate::context::executor::{AbortHandle, TaskHandle, spawn};
 use crate::context::executor::{Executor, NodeId};
 pub use crate::context::id::Id;
+use crate::context::{Context2, ContextInstallGuard};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use std::panic::resume_unwind;
@@ -100,7 +100,9 @@ impl Runtime {
                         self.simulation_start_time,
                     );
                     init_fn();
-                    Executor::run_current_context();
+                    Context2::with(|cx2| {
+                        Executor::run_current_context(cx2);
+                    });
                     context_guard.destroy().unwrap().finalize()
                 })
                 .unwrap()

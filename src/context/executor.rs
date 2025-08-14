@@ -1,4 +1,3 @@
-use crate::context::with_context_option;
 use crate::event::Event;
 use crate::simulator::for_all_simulators;
 use crate::{
@@ -238,76 +237,58 @@ impl Executor {
         debug_assert!(removed);
     }
 
-    pub fn run_current_context() {
+    pub fn run_current_context(cx2: &Context2) {
         loop {
-            while let Some(mut task) = Context2::with(|cx| {
+            let Some(mut task) = cx2.with_cx(|cx| {
                 loop {
-                    let task_id = cx
+                    let task_id = cx2
                         .queue
                         .borrow_mut()
                         .as_mut()
                         .unwrap()
                         .ready_queue
                         .pop_front()?;
-                    let mut cx = cx.context.borrow_mut();
-                    let cx = cx.as_mut().unwrap();
-                    let ex = &mut cx.executor;
-                    let task_entry = ex.tasks.get_mut(&task_id).unwrap();
+                    let task_entry = cx.executor.tasks.get_mut(&task_id).unwrap();
                     match task_entry.shared.state.load(Relaxed) {
-                        TASK_READY => (),
+                        TASK_READY => {
+                            let task = task_entry.task.take().unwrap();
+                            cx.event_handler
+                                .handle_event(Event::TaskRun(task_entry.shared.id));
+                            task_entry.shared.state.store(TASK_WAITING, Relaxed);
+                            return Some(task);
+                        }
                         TASK_CANCELLED => {
                             let id = task_entry.shared.id;
-                            ex.remove_task_entry(id);
+                            (&mut cx.executor).remove_task_entry(id);
                             continue;
                         }
                         TASK_COMPLETE | TASK_WAITING | TASK_END.. => unreachable!(),
                     }
-                    let task = task_entry.task.take().unwrap();
-                    cx.event_handler
-                        .handle_event(Event::TaskRun(task_entry.shared.id));
-                    debug_assert!(cx.current_node == NodeId::INIT);
-                    cx.current_node = task_entry.shared.node;
-                    task_entry.shared.state.store(TASK_WAITING, Relaxed);
-                    break Some(task);
                 }
-            }) {
-                let keep = task.as_mut().run();
-                with_context(|cx| {
-                    let base = task.as_base();
-                    debug_assert_eq!(cx.current_node, base.node);
-                    cx.current_node = NodeId::INIT;
-                    if keep {
-                        let task_entry = cx.executor.tasks.get_mut(&base.id).unwrap();
-                        assert!(task_entry.task.replace(Some(task)).is_none());
-                    } else {
-                        cx.executor.remove_task_entry(base.id);
-                    }
-                });
-            }
-            if !Context2::with(|cx2| {
-                cx2.with_cx(|cx| {
+            }) else {
+                if cx2.with_cx(|cx| {
                     cx.executor
                         .time_scheduler
                         .wait_until_next_future_ready(&cx2.time, &mut *cx.event_handler)
-                })
-            }) {
-                break;
-            }
-        }
-        let tasks = with_context(|cx| mem::take(&mut cx.executor.tasks));
-        if cfg!(debug_assertions) {
-            for (_, TaskEntry { shared, task }) in tasks {
-                match shared.state.load(Relaxed) {
-                    TASK_CANCELLED | TASK_COMPLETE => {
-                        assert!(task.into_inner().is_none());
-                    }
-                    TASK_READY | TASK_END.. => unreachable!(),
-                    TASK_WAITING => {
-                        assert!(task.into_inner().is_some());
-                        eprintln!("task still waiting");
-                    }
+                }) {
+                    continue;
+                } else {
+                    break;
                 }
-            }
+            };
+            let &TaskShared { node, id, .. } = &**task.as_base();
+            cx2.node_scope(node, move || {
+                let keep = task.as_mut().run();
+                cx2.with_cx(|cx| {
+                    if keep {
+                        let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
+                        assert!(task_entry.task.replace(Some(task)).is_none());
+                    } else {
+                        drop(task);
+                        cx.executor.remove_task_entry(id);
+                    }
+                })
+            });
         }
     }
 }
@@ -318,13 +299,13 @@ fn abort_local(
     tasks: &mut HashMap<Id, TaskEntry>,
 ) -> Option<Pin<Box<dyn TaskDyn>>> {
     let task_entry = tasks.get_mut(&task_id).unwrap();
-    match task_entry.shared.state.load(Relaxed) {
+    let state = task_entry.shared.state.load(Relaxed);
+    match state {
         TASK_CANCELLED | TASK_COMPLETE => None,
         TASK_WAITING | TASK_READY => {
             task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
             queue.ready_queue.push_back(task_id);
-            let task = task_entry.task.take().unwrap();
-            Some(task)
+            task_entry.task.take()
         }
         TASK_END.. => unreachable!(),
     }
@@ -411,15 +392,15 @@ impl NodeId {
     ///
     /// Can only be called from within a simulation.
     pub fn current() -> Self {
-        with_context(|cx| cx.current_node)
+        Self::try_current().expect("not inside a simulation")
     }
 
     /// Returns the id of the current node if within the simulation.
     /// Returns `None` otherwise.
     pub fn try_current() -> Option<Self> {
-        with_context_option(|cx| {
-            if let Some(cx) = cx {
-                Some(cx.current_node)
+        Context2::with(|cx2| {
+            if cx2.time.get().is_some() {
+                Some(cx2.current_node())
             } else {
                 None
             }

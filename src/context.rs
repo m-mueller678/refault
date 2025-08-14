@@ -7,11 +7,11 @@ use crate::simulator::Simulator;
 use executor::{Executor, ExecutorQueue, NodeId};
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
+use scopeguard::guard;
 use std::any::TypeId;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::mem;
 use std::time::Duration;
 
 thread_local! {
@@ -21,6 +21,7 @@ thread_local! {
         time:Cell::new(None),
         queue:RefCell::new(None),
         pre_next_global_id:Cell::new(0),
+        current_node:Cell::new(NodeId::INIT),
     }};
 }
 
@@ -35,7 +36,6 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
 pub type SimulatorRc = Option<Box<dyn Simulator>>;
 
 pub struct Context {
-    current_node: NodeId,
     executor: Executor,
     pub event_handler: Box<dyn EventHandler>,
     pub simulators_by_type: HashMap<TypeId, usize>,
@@ -49,6 +49,7 @@ pub struct Context2 {
     pub rng: RefCell<Option<ChaCha12Rng>>,
     pub time: Cell<Option<Duration>>,
     pub queue: RefCell<Option<ExecutorQueue>>,
+    current_node: Cell<NodeId>,
     pre_next_global_id: Cell<u64>,
 }
 
@@ -57,15 +58,19 @@ impl Context2 {
         CONTEXT.with(f)
     }
 
+    pub fn node_scope<R>(&self, node: NodeId, f: impl FnOnce() -> R) -> R {
+        let calling_node = self.current_node.get();
+        self.current_node.set(node);
+        let _guard = guard((), |()| self.current_node.set(calling_node));
+        f()
+    }
+
     pub fn with_in_node<R>(node: NodeId, f: impl FnOnce(&Context2) -> R) -> R {
-        Self::with(|cx| {
-            let calling_node = with_context(|cx| mem::replace(&mut cx.current_node, node));
-            let ret = f(cx);
-            with_context(|cx| {
-                cx.current_node = calling_node;
-            });
-            ret
-        })
+        Self::with(|cx| cx.node_scope(node, || f(cx)))
+    }
+
+    pub fn current_node(&self) -> NodeId {
+        self.current_node.get()
     }
 
     pub fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
@@ -78,6 +83,7 @@ pub struct ContextInstallGuard(NotSendSync);
 impl ContextInstallGuard {
     pub fn new(event_handler: Box<dyn EventHandler>, seed: u64, start_time: Duration) -> Self {
         Context2::with(|cx2| {
+            debug_assert!(cx2.current_node() == NodeId::INIT);
             assert!(cx2.time.replace(Some(start_time)).is_none());
             assert!(
                 cx2.rng
@@ -92,7 +98,6 @@ impl ContextInstallGuard {
             );
             let new_context = Context {
                 stopped: vec![false],
-                current_node: NodeId::INIT,
                 executor: cx2.queue.borrow_mut().as_mut().unwrap().executor(),
                 event_handler,
                 // random is already deterministic at this point.
@@ -107,6 +112,7 @@ impl ContextInstallGuard {
 
     pub fn destroy(&mut self) -> Option<Box<dyn EventHandler>> {
         CONTEXT.with(|cx2| {
+            debug_assert!(cx2.current_node() == NodeId::INIT);
             if cx2.time.get().is_none() {
                 return None;
             }

@@ -50,12 +50,12 @@ fn abort_self() {
         let handle = Rc::new(Cell::new(Option::<TaskHandle<()>>::None));
         let h2 = handle.clone();
         let task = spawn(async move {
-            sleep(Duration::from_millis(2)).await;
+            sleep(Duration::from_millis(1)).await;
             h2.take().unwrap().abort();
             pending::<()>().await;
         });
         handle.set(Some(task));
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(2)).await;
         assert!(Rc::strong_count(&handle) == 1);
     })
 }
