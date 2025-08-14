@@ -83,6 +83,7 @@ pin_project_lite::pin_project! {
     }
 }
 
+// TODO this could probably be just a dyn FUture with shared state kepy outside.
 trait TaskDyn {
     fn run(self: Pin<&mut Self>) -> bool;
     fn as_base(&self) -> &Arc<TaskShared>;
@@ -282,11 +283,15 @@ impl Executor {
                     if keep {
                         match task.as_base().state.load(Relaxed) {
                             TASK_COMPLETE | TASK_END.. => unreachable!(),
-                            TASK_CANCELLED => (),
-                            TASK_WAITING | TASK_READY => {}
+                            TASK_CANCELLED => {
+                                // task was put into queue by abort, so we should keep the entry in the map
+                                drop(task);
+                            }
+                            TASK_WAITING | TASK_READY => {
+                                let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
+                                assert!(task_entry.task.replace(Some(task)).is_none());
+                            }
                         }
-                        let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
-                        assert!(task_entry.task.replace(Some(task)).is_none());
                     } else {
                         drop(task);
                         cx.executor.remove_task_entry(id);
@@ -306,7 +311,11 @@ fn abort_local(
     let state = task_entry.shared.state.load(Relaxed);
     match state {
         TASK_CANCELLED | TASK_COMPLETE => None,
-        TASK_WAITING | TASK_READY => {
+        TASK_READY => {
+            task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
+            task_entry.task.take()
+        }
+        TASK_WAITING => {
             task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
             queue.ready_queue.push_back(task_id);
             task_entry.task.take()
