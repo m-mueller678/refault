@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 pin_project_lite::pin_project! {
     /// The future returned by [sleep] and [sleep_until].
+    #[must_use]
     pub struct Sleep {
         #[pin]
         state: PinRcStorage<Cell<TimeFutureState>>,

@@ -1,6 +1,6 @@
 //! Controlling simulations, tasks and nodes.
-pub use crate::context::executor::{AbortHandle, TaskHandle, spawn};
-use crate::context::executor::{Executor, NodeId};
+use crate::context::executor::Executor;
+pub use crate::context::executor::{AbortHandle, NodeId, TaskHandle, spawn};
 pub use crate::context::id::Id;
 use crate::context::{Context2, ContextInstallGuard};
 use crate::event::Event;

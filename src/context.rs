@@ -36,11 +36,10 @@ pub fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
 pub type SimulatorRc = Option<Box<dyn Simulator>>;
 
 pub struct Context {
-    executor: Executor,
+    pub executor: Executor,
     pub event_handler: Box<dyn EventHandler>,
     pub simulators_by_type: HashMap<TypeId, usize>,
     pub simulators: Vec<SimulatorRc>,
-    pub stopped: Vec<bool>,
 }
 
 pub struct Context2 {
@@ -97,7 +96,6 @@ impl ContextInstallGuard {
                     .is_none()
             );
             let new_context = Context {
-                stopped: vec![false],
                 executor: cx2.queue.borrow_mut().as_mut().unwrap().executor(),
                 event_handler,
                 // random is already deterministic at this point.

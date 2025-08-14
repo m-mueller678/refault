@@ -187,6 +187,13 @@ impl WakeRef for TaskShared {
 }
 
 impl Executor {
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn is_final_sopping(&self) -> bool {
+        self.final_stopped
+    }
+
     pub fn final_stop() {
         with_context(|cx| cx.executor.final_stopped = true);
         for n in NodeId::all() {
@@ -394,7 +401,6 @@ impl NodeId {
     /// Can only be called from within a simulation.
     pub fn spawn<F: Future + 'static>(self, future: F) -> TaskHandle<F::Output> {
         with_context(|cx| {
-            assert!(!cx.stopped[self.0]);
             cx.event_handler.handle_event(Event::TaskSpawned);
             cx.executor.spawn(self, future)
         })
@@ -451,7 +457,6 @@ impl NodeId {
             if !was_running {
                 return;
             }
-            for_all_simulators(false, |x| x.stop_node());
             let task_ids = {
                 cx2.with_cx(|context| {
                     let node = &mut context.executor.nodes[self.0];
@@ -467,6 +472,7 @@ impl NodeId {
                     )
                 }))
             }
+            for_all_simulators(false, |x| x.stop_node());
         });
     }
 

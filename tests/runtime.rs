@@ -4,7 +4,8 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
-use deterministic_simulation_core::runtime::{TaskHandle, spawn};
+use deterministic_simulation_core::runtime::{NodeId, TaskHandle, spawn};
+use deterministic_simulation_core::simulator::{Simulator, add_simulator, simulator};
 use deterministic_simulation_core::{
     runtime::{Id, Runtime},
     time::sleep,
@@ -35,6 +36,7 @@ fn global_state() {
 }
 
 #[test]
+#[should_panic]
 fn spawn_on_drop() {
     Runtime::new().run(|| async {
         defer! {
@@ -42,6 +44,55 @@ fn spawn_on_drop() {
         }
         pending::<()>().await;
     });
+}
+
+struct Sim;
+impl Simulator for Sim {}
+
+#[test]
+fn simulator_on_drop() {
+    Runtime::new().run(|| async {
+        add_simulator(Sim);
+        defer! {
+            simulator::<Sim>().with(|_|{})
+        }
+    })
+}
+
+#[test]
+#[should_panic]
+fn simulator_after_node() {
+    Runtime::new().run(|| async {
+        NodeId::create_node();
+        add_simulator(Sim);
+    })
+}
+
+#[test]
+fn kill_node() {
+    Runtime::new().run(|| async {
+        let rc = Rc::new(Cell::new(0));
+        let spawn_on_new_node = || {
+            let rc2 = rc.clone();
+            let node = NodeId::create_node();
+            node.spawn(async move {
+                sleep(Duration::from_millis(10)).await;
+                rc2.set(1);
+                sleep(Duration::from_millis(10)).await;
+            })
+            .detach();
+            node
+        };
+        let n1 = spawn_on_new_node();
+        let n2 = spawn_on_new_node();
+        assert!(Rc::strong_count(&rc) == 3);
+        n1.stop();
+        assert!(Rc::strong_count(&rc) == 2);
+        sleep(Duration::from_millis(15)).await;
+        n2.stop();
+        assert!(Rc::strong_count(&rc) == 1);
+        assert!(rc.get() == 1);
+    })
 }
 
 #[test]
