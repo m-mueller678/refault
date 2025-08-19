@@ -18,7 +18,7 @@ priority-queue = "2.0.0"
 pin-arc = "0.2.1"
 cooked-waker = "5"
 either = "1.15"
-tarpc = { version = "0.37", optional = true }
+tarpc = { version = "0.37", optional = true ,default-features = false}
 scopeguard = "1.2"
 smallvec="1"
 

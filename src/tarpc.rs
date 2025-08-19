@@ -7,6 +7,7 @@ use std::{
     io::Error,
     marker::PhantomData,
     pin::Pin,
+    rc::Rc,
     task::{Poll, ready},
 };
 
@@ -71,14 +72,14 @@ impl<A: 'static, B: 'static> Stream for ServerConnection<A, B> {
     ) -> Poll<Option<Self::Item>> {
         self.socket
             .poll_next_unpin(cx)
-            .map(|x| Some(x.unwrap().map(|x| unbox_rc(x.content))))
+            .map(|x| Some(x.unwrap().map(|x| unbox_rc(x.content).request.unwrap())))
     }
 }
 
-fn unbox_rc<A: Clone>(x: Rc<A>) -> A {
-    match Rc::try_unwrap() {
+fn unbox_rc<A>(x: Rc<A>) -> A {
+    match Rc::try_unwrap(x) {
         Ok(x) => x,
-        Err(x) => (*x).clone(),
+        Err(_) => todo!(),
     }
 }
 
@@ -154,22 +155,13 @@ impl<A: 'static, B: 'static> Stream for ClientConnection<A, B> {
     ) -> Poll<Option<Self::Item>> {
         Poll::Ready(Some(loop {
             break match ready!(self.socket.poll_next_unpin(cx)).unwrap() {
-                Ok(Addressed {
-                    addr: _,
-                    content:
-                        Response {
-                            response: None,
-                            _p: PhantomData,
-                        },
-                }) => continue,
-                Ok(Addressed {
-                    addr: _,
-                    content:
-                        Response {
-                            response: Some(x),
-                            _p: PhantomData,
-                        },
-                }) => Ok(x),
+                Ok(x) => {
+                    if let Some(response) = unbox_rc(x.content).response {
+                        Ok(response)
+                    } else {
+                        continue;
+                    }
+                }
                 Err(e) => Err(e),
             };
         }))

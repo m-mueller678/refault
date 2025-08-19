@@ -116,6 +116,7 @@ pin_project_lite::pin_project! {
     ///
     /// A task handle must either be polled to completion or destroyd via [detach](Self::detach) or [abort](Self::abort).
     /// Dropping the handle without doing any of those will panic.
+    #[must_use]
     pub struct TaskHandle<T> {
         #[pin]
         result: oneshot::Receiver<T>,

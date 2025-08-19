@@ -40,7 +40,7 @@ fn global_state() {
 fn spawn_on_drop() {
     Runtime::new().run(|| async {
         defer! {
-            spawn(async move{panic!()});
+            spawn(async move{panic!()}).detach();
         }
         pending::<()>().await;
     });

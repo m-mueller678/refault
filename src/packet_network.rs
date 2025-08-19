@@ -45,6 +45,11 @@ impl NetworkBox {
     pub fn new<T: NetworkBackend>(inner: T) -> Self {
         NetworkBox(Box::new(inner))
     }
+
+    pub fn unwrap_backend<T: NetworkBackend>(&mut self) -> &mut T {
+        let network: &mut dyn NetworkBackend = &mut *self.0;
+        (network as &mut dyn Any).downcast_mut().unwrap()
+    }
 }
 
 pub trait NetworkBackend: Simulator {
