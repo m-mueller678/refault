@@ -3,21 +3,24 @@ use crate::{
     packet_network::{
         Addr, Addressed, BackendSocket, NetworkBackend, NetworkBox, Packet, packet_type_id,
     },
-    runtime::{Id, spawn},
+    runtime::Id,
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
 };
 use futures::{Sink, Stream};
 use futures_channel::mpsc;
-use std::task::ready;
+use rand::seq::IndexedRandom;
+use smallvec::SmallVec;
 use std::{
     any::TypeId,
     collections::{HashMap, hash_map::Entry},
     io::{Error, ErrorKind},
     pin::Pin,
+    rc::Rc,
     task::Poll,
     time::Instant,
 };
+use std::{task::ready, time::Duration};
 
 pub trait ConnectivityFunction: 'static {
     fn send_connectivity(&mut self, packet: &WrappedPacket) -> SendConnectivity;
@@ -25,14 +28,17 @@ pub trait ConnectivityFunction: 'static {
     fn receive_connectivity(&mut self, packet: &WrappedPacket) -> ReceiveConnectivity;
 }
 
+pub struct PerfectConnectivity(Duration);
+
 /// A Packet with sender and recipient address and a unique packet id.
 ///
 /// This is passed to a [ConnectivityFunction] for inspection.
+#[derive(Clone)]
 pub struct WrappedPacket {
     src: Addr,
     dst: Addr,
     id: Id,
-    content: Box<dyn Packet>,
+    content: Rc<dyn Packet>,
 }
 
 impl WrappedPacket {
@@ -51,10 +57,9 @@ impl WrappedPacket {
 }
 
 /// See [ConnectivityFunction::send_connectivity].
-pub enum SendConnectivity {
-    Drop,
-    Error { error: Error },
-    Deliver { deliver_at: Instant },
+pub struct SendConnectivity {
+    pub send: SmallVec<[Duration; 1]>,
+    pub result: Result<(), Error>,
 }
 
 /// See [ConnectivityFunction::pre_receive_connectivity].
@@ -110,23 +115,26 @@ impl<C: ConnectivityFunction> Sink<Addressed> for ConNetSocket<C> {
                 dst: item.addr,
                 content: item.content,
             };
-            match net.connectivity.send_connectivity(&msg) {
-                SendConnectivity::Drop => Ok(()),
-                SendConnectivity::Error { error } => Err(error),
-                SendConnectivity::Deliver { deliver_at } => {
-                    let handle = this.simulator.clone();
-                    spawn(async move {
-                        sleep_until(deliver_at).await;
-                        handle.with(|net| {
-                            let key = (msg.dst, packet_type_id(&*msg.content));
-                            if let Some(r) = net.receivers.get_mut(&key) {
-                                r.unbounded_send(msg).unwrap();
-                            }
-                        });
-                    });
-                    Ok(())
-                }
+            let send_connectivity = net.connectivity.send_connectivity(&msg);
+            if !send_connectivity.send.is_empty() {
+                let delays = send_connectivity.send;
+                let handle = this.simulator.clone();
+                NodeId::INIT
+                    .spawn(async move {
+                        let start = Instant::now();
+                        for &delay in &delays {
+                            sleep_until(start + delay).await;
+                            handle.with(|net| {
+                                let key = (msg.dst, packet_type_id(&*msg.content));
+                                if let Some(r) = net.receivers.get_mut(&key) {
+                                    r.unbounded_send(msg.clone()).unwrap();
+                                }
+                            });
+                        }
+                    })
+                    .detach();
             }
+            send_connectivity.result
         })
     }
 

@@ -71,7 +71,14 @@ impl<A: 'static, B: 'static> Stream for ServerConnection<A, B> {
     ) -> Poll<Option<Self::Item>> {
         self.socket
             .poll_next_unpin(cx)
-            .map(|x| Some(x.unwrap().map(|x| x.content.request.unwrap())))
+            .map(|x| Some(x.unwrap().map(|x| unbox_rc(x.content))))
+    }
+}
+
+fn unbox_rc<A: Clone>(x: Rc<A>) -> A {
+    match Rc::try_unwrap() {
+        Ok(x) => x,
+        Err(x) => (*x).clone(),
     }
 }
 

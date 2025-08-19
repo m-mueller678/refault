@@ -10,3 +10,5 @@ pub mod runtime;
 pub mod simulator;
 pub use context::time;
 pub mod tarpc;
+
+pub use smallvec;

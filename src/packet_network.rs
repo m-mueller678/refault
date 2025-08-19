@@ -4,13 +4,13 @@ use crate::{
     simulator::{Simulator, simulator},
 };
 use futures::{Sink, Stream, never::Never};
-use std::marker::PhantomData;
 use std::{
     any::{Any, TypeId},
     io::Error,
     pin::Pin,
     task::Poll,
 };
+use std::{marker::PhantomData, rc::Rc};
 
 pub trait Packet: Any {}
 impl Packet for () {}
@@ -27,7 +27,7 @@ pub struct Addr {
 ///
 /// When returned from a receiving function, the address refers to the sender.
 /// When passed into a transmitting function, it refers to the recipient.
-pub struct Addressed<T = Box<dyn Packet>> {
+pub struct Addressed<T = Rc<dyn Packet>> {
     pub addr: Addr,
     pub content: T,
 }
@@ -76,7 +76,7 @@ pub struct Socket<Receive: Packet> {
 }
 
 impl<Receive: Packet> Stream for Socket<Receive> {
-    type Item = Result<Addressed<Receive>, Error>;
+    type Item = Result<Addressed<Rc<Receive>>, Error>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -85,7 +85,7 @@ impl<Receive: Packet> Stream for Socket<Receive> {
         self.inner.as_mut().poll_next(cx).map(|x| {
             Some(x.unwrap().map(|x| Addressed {
                 addr: x.addr,
-                content: *(x.content as Box<dyn Any>).downcast().unwrap(),
+                content: (x.content as Rc<dyn Any>).downcast().unwrap(),
             }))
         })
     }
@@ -104,7 +104,7 @@ impl<Receive: Packet, A: Packet> Sink<Addressed<A>> for Socket<Receive> {
     fn start_send(mut self: Pin<&mut Self>, item: Addressed<A>) -> Result<(), Self::Error> {
         self.inner.as_mut().start_send(Addressed {
             addr: item.addr,
-            content: Box::new(item.content),
+            content: Rc::new(item.content),
         })
     }
 

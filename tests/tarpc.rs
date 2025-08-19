@@ -27,20 +27,22 @@ fn hello() {
     Runtime::new().run(|| async {
         let server = NodeId::create_node();
         let server_port = Id::new();
-        server.spawn(async move {
-            listen(server_port)
-                .unwrap()
-                .filter_map(|r| ready(r.ok()))
-                .map(BaseChannel::with_defaults)
-                .map(|channel| {
-                    let server = HelloGreeter(1);
-                    channel
-                        .execute(server.serve())
-                        .for_each(|x| async move { spawn(x).await.unwrap() })
-                })
-                .buffer_unordered(10)
-                .for_each(|_| async {})
-                .await;
-        });
+        server
+            .spawn(async move {
+                listen(server_port)
+                    .unwrap()
+                    .filter_map(|r| ready(r.ok()))
+                    .map(BaseChannel::with_defaults)
+                    .map(|channel| {
+                        let server = HelloGreeter(1);
+                        channel
+                            .execute(server.serve())
+                            .for_each(|x| async move { spawn(x).await.unwrap() })
+                    })
+                    .buffer_unordered(10)
+                    .for_each(|_| async {})
+                    .await;
+            })
+            .detach();
     })
 }
