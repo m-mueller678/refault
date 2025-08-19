@@ -16,6 +16,8 @@ use std::{
     rc::Rc,
 };
 
+use scopeguard::guard;
+
 use crate::context::{Context2, executor::NodeId, with_context};
 
 /// A simulation-scoped singleton.
@@ -54,7 +56,7 @@ pub fn add_simulator<S: Simulator>(simulator: S) {
 
 /// Call `f` with a mutable reference to the simulator if it exists or `None` otherwise.
 fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -> R {
-    if let Some((index, mut simulator)) = with_context(|cx| {
+    if let Some((index, simulator)) = with_context(|cx| {
         let index = *cx.simulators_by_type.get(&TypeId::of::<S>())?;
 
         let simulator = cx.simulators[index]
@@ -62,12 +64,13 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
             .unwrap_or_else(|| panic!("simulator already mutably borrowed: {}", type_name::<S>()));
         Some((index, simulator))
     }) {
-        let ret = f(Some(
-            (&mut *simulator as &mut dyn Any).downcast_mut().unwrap(),
-        ));
-        with_context(|cx| {
-            assert!(cx.simulators[index].replace(simulator).is_none());
+        let mut simulator = guard(simulator, |simulator| {
+            with_context(|cx| {
+                assert!(cx.simulators[index].replace(simulator).is_none());
+            });
         });
+        let simulator: &mut dyn Simulator = &mut **simulator;
+        let ret = f(Some((simulator as &mut dyn Any).downcast_mut().unwrap()));
         ret
     } else {
         f(None)
