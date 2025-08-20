@@ -69,6 +69,17 @@ fn simulator_after_node() {
 }
 
 #[test]
+#[should_panic]
+fn simulator_after_stop() {
+    Runtime::new().run(|| async {
+        defer! {
+            add_simulator(Sim);
+        }
+        pending().await
+    })
+}
+
+#[test]
 fn kill_node() {
     Runtime::new().run(|| async {
         let rc = Rc::new(Cell::new(0));

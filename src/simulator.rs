@@ -39,8 +39,12 @@ pub trait Simulator: Any {
 }
 
 /// Add a simulator to the simulation.
+/// Simulators must be added before additional nodes are spawned.
 ///
-/// Panics if a simulator with of type has already been added.
+/// Panics if any of the following is true:
+/// - A simulator with the same type has already been added
+/// - An additional node has already been created
+/// - The simulation is shutting down.
 pub fn add_simulator<S: Simulator>(simulator: S) {
     let simulator = Some(Box::new(simulator) as Box<_>);
     with_context(|cx| {

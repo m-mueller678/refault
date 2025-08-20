@@ -116,7 +116,6 @@ impl ContextInstallGuard {
             Executor::final_stop();
             while let Some(x) = cx2.with_cx(|cx| cx.simulators.pop()) {
                 drop(x.unwrap())
-                //TODO prevent adding simulators after certain point
             }
             let Context { event_handler, .. } = cx2.context.take().unwrap();
             cx2.time.take().unwrap();
