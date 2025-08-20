@@ -20,6 +20,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
+//TODO fix this. Sleep is not Send currently.
+unsafe impl Send for Sleep {}
+
 pin_project_lite::pin_project! {
     /// The future returned by [sleep] and [sleep_until].
     #[must_use]

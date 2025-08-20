@@ -21,6 +21,8 @@ either = "1.15"
 tarpc = { version = "0.37", optional = true ,default-features = false}
 scopeguard = "1.2"
 smallvec="1"
+bytes = "1"
+agnostic-net = "0.2.3"
 
 [dev-dependencies]
 getrandom = "0.3.3"

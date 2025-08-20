@@ -7,6 +7,9 @@ use crate::{
 use cooked_waker::{IntoWaker, WakeRef};
 use futures_channel::oneshot;
 use std::collections::HashSet;
+use std::error::Error;
+use std::fmt::{Debug, Display};
+use std::io;
 use std::sync::atomic::Ordering::Relaxed;
 use std::task::Poll;
 use std::{
@@ -108,6 +111,9 @@ impl<F: Future> TaskDyn for Task<F> {
     }
 }
 
+//TODO fix this.
+unsafe impl<T> Send for TaskHandle<T> {}
+
 pin_project_lite::pin_project! {
     /// A handle to a task.
     ///
@@ -133,6 +139,23 @@ pin_project_lite::pin_project! {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct TaskAborted(());
+
+impl Into<io::Error> for TaskAborted {
+    fn into(self) -> io::Error {
+        io::Error::new(io::ErrorKind::Other, "aborted")
+    }
+}
+
+impl Display for TaskAborted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
+    }
+}
+
+impl Error for TaskAborted {}
 
 impl<T> TaskHandle<T> {
     /// Abort the associated task.
@@ -352,14 +375,14 @@ impl AbortHandle {
 }
 
 impl<T> Future for TaskHandle<T> {
-    type Output = Option<T>;
+    type Output = Result<T, TaskAborted>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.result.poll(cx) {
             Poll::Ready(x) => {
                 *this.droppable = true;
-                Poll::Ready(x.ok())
+                Poll::Ready(x.map_err(|_| TaskAborted(())))
             }
             Poll::Pending => Poll::Pending,
         }
