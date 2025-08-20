@@ -1,7 +1,7 @@
 //! Controlling simulations, tasks and nodes.
 use crate::context::executor::Executor;
 pub use crate::context::executor::{AbortHandle, NodeId, TaskHandle, spawn};
-pub use crate::context::id::Id;
+pub use crate::context::id::{Id, IdRange};
 use crate::context::{Context2, ContextInstallGuard};
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
