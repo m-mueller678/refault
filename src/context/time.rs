@@ -45,7 +45,8 @@ pin_project_lite::pin_project! {
 enum TimeFutureState {
     Init(Instant),
     Waiting(Waker),
-    Done,
+    Done(Instant),
+    Taken,
 }
 
 impl Sleep {
@@ -57,15 +58,15 @@ impl Sleep {
 }
 
 impl Future for Sleep {
-    type Output = ();
+    type Output = Instant;
 
     fn poll(self: Pin<&mut Self>, fut_cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state_storage = self.project().state;
         let state = state_storage.as_ref().get_pin();
-        match state.replace(TimeFutureState::Done) {
+        match state.replace(TimeFutureState::Taken) {
             TimeFutureState::Init(instant) => with_context(|cx| {
                 if cx.executor.time_scheduler.now >= instant {
-                    Poll::Ready(())
+                    Poll::Ready(instant)
                 } else {
                     state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
                     cx.executor.time_scheduler.upcoming_events.push(
@@ -80,7 +81,11 @@ impl Future for Sleep {
                 state.set(TimeFutureState::Waiting(waker));
                 Poll::Pending
             }
-            TimeFutureState::Done => Poll::Ready(()),
+            TimeFutureState::Done(t) => {
+                state.set(TimeFutureState::Done(t));
+                Poll::Ready(t)
+            }
+            TimeFutureState::Taken => unreachable!(),
         }
     }
 }
@@ -133,7 +138,8 @@ impl TimeScheduler {
         time.set(Some(time.get().unwrap() + dt));
         self.now = next.0;
         while let Some(x) = self.upcoming_events.pop_if(|_, t| t.0 <= self.now) {
-            let TimeFutureState::Waiting(waker) = x.0.0.get_pin().replace(TimeFutureState::Done)
+            let TimeFutureState::Waiting(waker) =
+                x.0.0.get_pin().replace(TimeFutureState::Done(x.1.0))
             else {
                 unreachable!();
             };

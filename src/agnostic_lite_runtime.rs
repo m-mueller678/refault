@@ -1,10 +1,15 @@
-use std::time::Instant;
+use std::{
+    future::ready,
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
 use agnostic_net::runtime::{
     AfterHandle, AsyncAfterSpawner, AsyncBlockingSpawner, AsyncLocalSpawner, AsyncSpawner,
     JoinHandle, LocalJoinHandle, RuntimeLite, Yielder,
-    time::{AsyncInterval, AsyncLocalInterval},
+    time::{AsyncLocalInterval, AsyncLocalSleep, AsyncLocalTimeout, AsyncTimeout, Delay, Elapsed},
 };
+use futures::{FutureExt, Stream};
 
 use crate::{
     context::{executor::TaskAborted, with_context},
@@ -25,26 +30,10 @@ impl RuntimeLite for SimRuntime {
     type LocalInterval = Interval;
     type Sleep = Sleep;
     type LocalSleep = Sleep;
-
-    type Delay<F>
-    where
-        F: Future + Send,
-    = Delay;
-
-    type LocalDelay<F>
-    where
-        F: Future,
-    = Delay;
-
-    type Timeout<F>
-    where
-        F: Future + Send,
-    = Timeout;
-
-    type LocalTimeout<F>
-    where
-        F: Future,
-    = Timeout;
+    type Delay<F: Future + Send> = Delay<F, Sleep>;
+    type LocalDelay<F: Future> = Delay<F, Sleep>;
+    type Timeout<F: Future + Send> = Timeout<F>;
+    type LocalTimeout<F: Future> = Timeout<F>;
 
     fn new() -> Self {
         with_context(|_| {});
@@ -52,7 +41,7 @@ impl RuntimeLite for SimRuntime {
     }
 
     fn name() -> &'static str {
-        Self::fqname().rsplit(b':').next().unwrap()
+        Self::fqname().rsplit(':').next().unwrap()
     }
 
     fn fqname() -> &'static str {
@@ -64,7 +53,7 @@ impl RuntimeLite for SimRuntime {
     }
 
     fn yield_now() -> impl Future<Output = ()> + Send {
-        Sleep::new(Instant::now())
+        sleep_until(Instant::now()).map(drop)
     }
 
     fn interval(interval: core::time::Duration) -> Self::Interval {
@@ -188,11 +177,11 @@ impl<O> LocalJoinHandle<O> for TaskHandle<O> {
     }
 }
 
-impl<O> AfterHandle<O> for TaskHandle<O> {
-    type JoinError;
+impl<O: Send + 'static> AfterHandle<O> for TaskHandle<O> {
+    type JoinError = TaskAborted;
 
     fn cancel(self) -> impl Future<Output = Option<Result<O, Self::JoinError>>> + Send {
-        todo!()
+        ready(todo!())
     }
 
     fn reset(&self, duration: core::time::Duration) {
@@ -263,12 +252,12 @@ impl AsyncBlockingSpawner for Spawner {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        unimplemented!()
+        todo!()
     }
 }
 
 impl AsyncAfterSpawner for Spawner {
-    type Instant;
+    type Instant = Instant;
 
     type JoinHandle<F>
     where
@@ -292,26 +281,94 @@ impl AsyncAfterSpawner for Spawner {
     }
 }
 
-pub struct Interval {
-    sleep: Pin<Box<Sleep>>,
-    until: Instant,
-    interval: Duration,
-}
+pub struct Interval {}
 
 impl AsyncLocalInterval for Interval {
     type Instant = Instant;
 
     fn reset(&mut self, interval: std::time::Duration) {
-        self.0 = Box::pin(sleep(interval))
+        todo!()
     }
 
     fn reset_at(&mut self, instant: Self::Instant) {
-        self.0 = Box::pin(sleep_until(instant))
+        todo!()
     }
 
     fn poll_tick(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Instant> {
-        self.0.poll(cx)
+        todo!()
     }
 }
 
-pub struct Delay<F> {}
+impl Stream for Interval {
+    type Item = Instant;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        todo!()
+    }
+}
+
+impl AsyncLocalSleep for Sleep {
+    type Instant = Instant;
+
+    fn reset(mut self: Pin<&mut Self>, deadline: Self::Instant) {
+        self.set(sleep_until(deadline))
+    }
+}
+
+pub struct Timeout<F>(F);
+
+impl<F: Future> Future for Timeout<F> {
+    type Output = Result<F::Output, Elapsed>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        todo!()
+    }
+}
+
+impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
+    type Instant = Instant;
+
+    fn timeout_local(timeout: Duration, fut: F) -> Self
+    where
+        Self: Sized + Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>>,
+        F: Future,
+    {
+        todo!()
+    }
+
+    fn timeout_local_at(deadline: Self::Instant, fut: F) -> Self
+    where
+        Self: Sized + Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>>,
+        F: Future,
+    {
+        todo!()
+    }
+}
+
+impl<F: Future + Send> AsyncTimeout<F> for Timeout<F> {
+    type Instant = Instant;
+
+    fn timeout(timeout: Duration, fut: F) -> Self
+    where
+        F: Future + Send,
+        Self:
+            Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>> + Send + Sized,
+    {
+        todo!()
+    }
+
+    fn timeout_at(deadline: Self::Instant, fut: F) -> Self
+    where
+        F: Future + Send,
+        Self:
+            Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>> + Send + Sized,
+    {
+        todo!()
+    }
+}

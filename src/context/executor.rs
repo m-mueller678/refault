@@ -113,6 +113,7 @@ impl<F: Future> TaskDyn for Task<F> {
 
 //TODO fix this.
 unsafe impl<T> Send for TaskHandle<T> {}
+unsafe impl<T> Sync for TaskHandle<T> {}
 
 pin_project_lite::pin_project! {
     /// A handle to a task.
