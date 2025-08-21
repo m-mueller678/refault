@@ -1,12 +1,11 @@
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-};
-
 use crate::{
     packet_network::Addr,
     runtime::{IdRange, NodeId},
     simulator::Simulator,
+};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
 /// Assign Ip-addresses to nodes.

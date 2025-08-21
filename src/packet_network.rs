@@ -1,16 +1,20 @@
 use crate::{
     context::executor::NodeId,
     runtime::Id,
-    simulator::{Simulator, simulator},
+    simulator::{Simulator, SimulatorHandle, simulator},
+    time::sleep_until,
 };
-use futures::{Sink, Stream, never::Never};
+use futures::{FutureExt, never::Never};
+use futures_intrusive::channel::UnbufferedChannel;
+use std::time::Duration;
 use std::{
     any::{Any, TypeId},
+    collections::HashMap,
     io::Error,
     pin::Pin,
-    task::Poll,
+    rc::Rc,
+    time::Instant,
 };
-use std::{marker::PhantomData, rc::Rc};
 
 pub trait Packet: Any {}
 impl Packet for () {}
@@ -36,107 +40,152 @@ pub struct Addressed<T = Box<dyn Packet>> {
 ///
 /// Using this prevents you from accidentally ending up with the TypeId of `Box<dyn Packet>` rather than the id of the contained value.
 pub fn packet_type_id(p: &dyn Packet) -> TypeId {
-    (*p).type_id()
+    let type_id = (*p).type_id();
+    type_id
 }
 
-pub struct NetworkBox(Box<dyn NetworkBackend>);
+pub struct PerfectConnectivity(Duration);
 
-impl NetworkBox {
-    pub fn new<T: NetworkBackend>(inner: T) -> Self {
-        NetworkBox(Box::new(inner))
-    }
+/// The function that is invoked to send a packet.
+///
+/// This function is used to customize how the simulated network behaves.
+/// Given a packet, it should invoke methods on the passed `Receivers` handle to cause the recipient to receive the packet.
+/// An implementation that always delivers packets after a fixed delay is provided with [perfecet_connectivity].
+/// A send function may choose to deliver the same packet multiple times, not deliver it at all, or deliver errors instead to simulate various network behaviours.
+///
+/// This is invoked by the network simulator in [send][ConNet::send].
+/// Attempting to access the simmulator from within this call will therefore panic.
+/// Instead, access the simulator from the returned future.
+pub type SendFunction =
+    Box<dyn FnMut(WrappedPacket) -> Pin<Box<dyn Future<Output = Result<(), Error>>>>>;
 
-    pub fn unwrap_backend<T: NetworkBackend>(&mut self) -> &mut T {
-        let network: &mut dyn NetworkBackend = &mut *self.0;
-        (network as &mut dyn Any).downcast_mut().unwrap()
-    }
+pub fn perfect_connectivity(latency: Duration) -> SendFunction {
+    Box::new(move |packet| {
+        Box::pin(async move {
+            ConNet::enqueue_packet(Instant::now() + latency, packet);
+            Ok(())
+        })
+    })
 }
 
-pub trait NetworkBackend: Simulator {
-    fn open(&mut self, ty: TypeId, port: Id) -> Result<Pin<Box<dyn BackendSocket>>, Error>;
+/// A Packet with sender and recipient address
+///
+/// This is passed to a [SendFunction].
+pub struct WrappedPacket {
+    pub src: Addr,
+    pub dst: Addr,
+    pub content: Box<dyn Packet>,
 }
 
-pub trait BackendSocket:
-    Stream<Item = Result<Addressed, Error>> + Sink<Addressed, Error = Error>
-{
+struct ConNet {
+    send_function: SendFunction,
+    receivers: HashMap<(Addr, TypeId), Rc<Inbox>>,
 }
 
-impl Simulator for NetworkBox {
-    fn create_node(&mut self) {
-        self.0.create_node()
-    }
+type Inbox = UnbufferedChannel<Result<Addressed, Error>>;
 
-    fn stop_node(&mut self) {
-        self.0.stop_node()
-    }
-
+impl Simulator for ConNet {
     fn start_node(&mut self) {
-        self.0.start_node()
+        let node = NodeId::current();
+        for (key, inbox) in &self.receivers {
+            if key.0.node == node {
+                while inbox.try_receive().is_ok() {}
+            }
+        }
+    }
+
+    fn create_node(&mut self) {
+        self.start_node();
     }
 }
 
-pub struct Socket<Receive: Packet> {
-    inner: Pin<Box<dyn BackendSocket>>,
-    _p: PhantomData<fn() -> Receive>,
+struct ConNetSocket {
+    simulator: SimulatorHandle<ConNet>,
+    local_addr: Addr,
 }
 
-impl<Receive: Packet> Stream for Socket<Receive> {
-    type Item = Result<Addressed<Rc<Receive>>, Error>;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx).map(|x| {
-            Some(x.unwrap().map(|x| Addressed {
-                addr: x.addr,
-                content: (x.content as Rc<dyn Any>).downcast().unwrap(),
-            }))
-        })
-    }
-}
-
-impl<Receive: Packet, A: Packet> Sink<Addressed<A>> for Socket<Receive> {
-    type Error = Error;
-
-    fn poll_ready(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
-        self.inner.as_mut().poll_ready(cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: Addressed<A>) -> Result<(), Self::Error> {
-        self.inner.as_mut().start_send(Addressed {
-            addr: item.addr,
-            content: Rc::new(item.content),
+impl ConNetSocket {
+    pub fn send<T: Packet>(
+        &self,
+        packet: Addressed<T>,
+    ) -> impl Future<Output = Result<(), Error>> + use<T> {
+        self.simulator.with(|net| {
+            net.send(WrappedPacket {
+                src: self.local_addr,
+                dst: packet.addr,
+                content: Box::new(packet.content),
+            })
         })
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
-        self.inner.as_mut().poll_flush(cx)
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), Self::Error>> {
-        self.inner.as_mut().poll_close(cx)
+    pub fn receive<T: Packet>(&self) -> impl Future<Output = Result<Addressed<T>, Error>> + use<T> {
+        self.simulator.with(|net| net.receive(self.local_addr))
     }
 }
 
-impl<Receive: Packet> Socket<Receive> {
-    pub fn new(port: Id) -> Result<Self, Error> {
-        simulator::<NetworkBox>().with(|net| {
-            net.0
-                .open(TypeId::of::<Receive>(), port)
-                .map(|inner| Socket {
-                    inner,
-                    _p: PhantomData,
+impl ConNet {
+    pub fn send(
+        &mut self,
+        packet: WrappedPacket,
+    ) -> impl Future<Output = Result<(), Error>> + use<> {
+        assert!(packet.src.node == NodeId::current());
+        (self.send_function)(packet)
+    }
+
+    pub fn receive<T: Packet>(
+        &mut self,
+        address: Addr,
+    ) -> impl Future<Output = Result<Addressed<T>, Error>> + use<T> {
+        assert!(address.node == NodeId::current());
+        self.receive_any(TypeId::of::<T>(), address).map(|result| {
+            result.map(|packet| Addressed {
+                content: *(packet.content as Box<dyn Any>).downcast().unwrap(),
+                addr: packet.addr,
+            })
+        })
+    }
+
+    fn receive_any(
+        &mut self,
+        ty: TypeId,
+        address: Addr,
+    ) -> impl Future<Output = Result<Addressed, Error>> + use<> {
+        let inbox = self.with_queue((address, ty), |inbox| inbox.clone());
+        async move { inbox.receive().await.unwrap() }
+    }
+
+    /// Cause the destination node to receive the packet at the specified time.
+    pub fn enqueue_packet(at: Instant, msg: WrappedPacket) {
+        let key = (msg.dst, packet_type_id(&*msg.content));
+        Self::enqueue(at, key, Ok(msg));
+    }
+
+    /// Cause the destination node to receive an error at the specified time.
+    pub fn enqueue_error(at: Instant, dst: Addr, ty: TypeId, error: Error) {
+        Self::enqueue(at, (dst, ty), Err(error));
+    }
+
+    fn enqueue(at: Instant, key: (Addr, TypeId), msg: Result<WrappedPacket, Error>) {
+        NodeId::INIT
+            .spawn(async move {
+                sleep_until(at).await;
+                let addressed = msg.map(|msg| Addressed {
+                    addr: msg.src,
+                    content: msg.content,
+                });
+                simulator::<ConNet>().with(|net| {
+                    net.with_queue(key, |inbox| {
+                        inbox.try_send(addressed).ok();
+                    });
                 })
-        })
+            })
+            .detach();
+    }
+
+    fn with_queue<R>(&mut self, key: (Addr, TypeId), f: impl FnOnce(&Rc<Inbox>) -> R) -> R {
+        f(self
+            .receivers
+            .entry(key)
+            .or_insert_with(|| Rc::new(Inbox::new())))
     }
 }
