@@ -27,7 +27,7 @@ pub struct Addr {
 ///
 /// When returned from a receiving function, the address refers to the sender.
 /// When passed into a transmitting function, it refers to the recipient.
-pub struct Addressed<T = Rc<dyn Packet>> {
+pub struct Addressed<T = Box<dyn Packet>> {
     pub addr: Addr,
     pub content: T,
 }

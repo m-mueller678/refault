@@ -18,11 +18,13 @@ priority-queue = "2.0.0"
 pin-arc = "0.2.1"
 cooked-waker = "5"
 either = "1.15"
-tarpc = { version = "0.37", optional = true ,default-features = false}
+tarpc = { version = "0.37", optional = true, default-features = false }
 scopeguard = "1.2"
-smallvec="1"
+smallvec = "1"
 bytes = "1"
 agnostic-net = "0.2.3"
+fragile = "2.0.1"
+futures-intrusive = "0.5"
 
 [dev-dependencies]
 getrandom = "0.3.3"

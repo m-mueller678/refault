@@ -7,18 +7,23 @@ use crate::{
 };
 use agnostic_net::ToSocketAddrs;
 use bytes::Bytes;
-use futures::StreamExt;
+use fragile::Fragile;
+use futures::{SinkExt, StreamExt};
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell, RefMut},
     io::{Error, ErrorKind, Result},
     net::SocketAddr,
     os::fd::{AsFd, AsRawFd},
 };
 
 pub struct UdpSocket {
+    inner: Fragile<RefCell<UdpSocketInner>>,
+}
+
+struct UdpSocketInner {
     socket: Socket<UdpDatagram>,
     local_addr: SocketAddr,
-    peer_addr: Cell<Option<SocketAddr>>,
+    peer_addr: Option<SocketAddr>,
 }
 
 struct UdpDatagram {
@@ -76,17 +81,17 @@ impl agnostic_net::UdpSocket for UdpSocket {
                 "could not resolve to any address",
             ));
         };
-        self.peer_addr.set(Some(addr));
+        self.bm().peer_addr = Some(addr);
         Ok(())
     }
 
     fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.local_addr)
+        Ok(self.bm().local_addr)
     }
 
     fn peer_addr(&self) -> Result<SocketAddr> {
-        self.peer_addr
-            .get()
+        self.bm()
+            .peer_addr
             .ok_or_else(|| Error::new(ErrorKind::NotConnected, "not connected"))
     }
 
@@ -100,7 +105,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
     }
 
     async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
-        todo!()
+        self.socket.send(item)
     }
 
     async fn send_to<A: agnostic_net::ToSocketAddrs<Self::Runtime>>(
@@ -233,9 +238,15 @@ impl UdpSocket {
         };
         let socket = Socket::new(port)?;
         Ok(UdpSocket {
-            socket,
-            local_addr: SocketAddr::new(ip, local_addr.port()),
-            peer_addr: Cell::new(None),
+            inner: Fragile::new(RefCell::new(UdpSocketInner {
+                socket,
+                local_addr: SocketAddr::new(ip, local_addr.port()),
+                peer_addr: Cell::new(None),
+            })),
         })
+    }
+
+    fn bm(&self) -> RefMut<UdpSocketInner> {
+        self.inner.get().borrow_mut()
     }
 }
