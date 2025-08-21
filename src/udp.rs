@@ -1,7 +1,7 @@
 use crate::{
     agnostic_lite_runtime::SimRuntime,
     ip_addr::IpAddrSimulator,
-    packet_network::{Packet, Socket},
+    packet_network::{ConNetSocket, Packet},
     runtime::NodeId,
     simulator::simulator,
 };
@@ -17,17 +17,19 @@ use std::{
 };
 
 pub struct UdpSocket {
-    inner: Fragile<RefCell<UdpSocketInner>>,
+    inner: Fragile<UdpSocketInner>,
 }
 
 struct UdpSocketInner {
-    socket: Socket<UdpDatagram>,
+    socket: ConNetSocket,
     local_addr: SocketAddr,
-    peer_addr: Option<SocketAddr>,
+    peer_addr: Cell<Option<SocketAddr>>,
 }
 
 struct UdpDatagram {
     bytes: Bytes,
+    src: SocketAddr,
+    dst: SocketAddr,
 }
 
 impl Packet for UdpDatagram {}
@@ -81,7 +83,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
                 "could not resolve to any address",
             ));
         };
-        self.bm().peer_addr = Some(addr);
+        self.bm().peer_addr.set(Some(addr));
         Ok(())
     }
 
@@ -92,12 +94,21 @@ impl agnostic_net::UdpSocket for UdpSocket {
     fn peer_addr(&self) -> Result<SocketAddr> {
         self.bm()
             .peer_addr
+            .get()
             .ok_or_else(|| Error::new(ErrorKind::NotConnected, "not connected"))
     }
 
     async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let packet = self.socket.next().await;
-        Ok(todo!())
+        loop {
+            let packet: UdpDatagram = self.inner.get().socket.receive().await?.content;
+            let inner = self.inner.get();
+            debug_assert!(packet.dst == inner.local_addr);
+            if inner.peer_addr.get().is_some_and(|x| x != packet.dst) {
+                continue;
+            }
+            buf[..packet.bytes.len()].copy_from_slice(&packet.bytes);
+            break Ok(packet.bytes.len());
+        }
     }
 
     async fn recv_from(&self, buf: &mut [u8]) -> std::io::Result<(usize, SocketAddr)> {

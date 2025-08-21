@@ -99,7 +99,7 @@ impl Simulator for ConNet {
     }
 }
 
-struct ConNetSocket {
+pub struct ConNetSocket {
     simulator: SimulatorHandle<ConNet>,
     local_addr: Addr,
 }
