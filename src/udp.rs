@@ -68,10 +68,6 @@ impl TryFrom<std::net::UdpSocket> for UdpSocket {
     }
 }
 
-//TODO fix
-unsafe impl Send for UdpSocket {}
-unsafe impl Sync for UdpSocket {}
-
 impl agnostic_net::UdpSocket for UdpSocket {
     type Runtime = SimRuntime;
 

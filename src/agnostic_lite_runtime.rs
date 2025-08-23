@@ -48,7 +48,7 @@ impl RuntimeLite for SimRuntime {
         std::any::type_name::<Self>()
     }
 
-    fn block_on<F: Future>(f: F) -> F::Output {
+    fn block_on<F: Future>(_f: F) -> F::Output {
         unimplemented!()
     }
 
@@ -56,11 +56,11 @@ impl RuntimeLite for SimRuntime {
         sleep_until(Instant::now()).map(drop)
     }
 
-    fn interval(interval: core::time::Duration) -> Self::Interval {
+    fn interval(_interval: core::time::Duration) -> Self::Interval {
         todo!()
     }
 
-    fn interval_at(start: Self::Instant, period: core::time::Duration) -> Self::Interval {
+    fn interval_at(_start: Self::Instant, _period: core::time::Duration) -> Self::Interval {
         todo!()
     }
 
@@ -98,7 +98,7 @@ impl RuntimeLite for SimRuntime {
         Self::delay_local(duration, fut)
     }
 
-    fn delay_local<F>(duration: core::time::Duration, fut: F) -> Self::LocalDelay<F>
+    fn delay_local<F>(_duration: core::time::Duration, _fut: F) -> Self::LocalDelay<F>
     where
         F: Future,
     {
@@ -112,7 +112,7 @@ impl RuntimeLite for SimRuntime {
         Self::delay_local_at(deadline, fut)
     }
 
-    fn delay_local_at<F>(deadline: Self::Instant, fut: F) -> Self::LocalDelay<F>
+    fn delay_local_at<F>(_deadline: Self::Instant, _fut: F) -> Self::LocalDelay<F>
     where
         F: Future,
     {
@@ -133,14 +133,14 @@ impl RuntimeLite for SimRuntime {
         Self::timeout_local_at(deadline, future)
     }
 
-    fn timeout_local<F>(duration: core::time::Duration, future: F) -> Self::LocalTimeout<F>
+    fn timeout_local<F>(_duration: core::time::Duration, _future: F) -> Self::LocalTimeout<F>
     where
         F: Future,
     {
         todo!()
     }
 
-    fn timeout_local_at<F>(deadline: Self::Instant, future: F) -> Self::LocalTimeout<F>
+    fn timeout_local_at<F>(_deadline: Self::Instant, _future: F) -> Self::LocalTimeout<F>
     where
         F: Future,
     {
@@ -181,10 +181,11 @@ impl<O: Send + 'static> AfterHandle<O> for TaskHandle<O> {
     type JoinError = TaskAborted;
 
     fn cancel(self) -> impl Future<Output = Option<Result<O, Self::JoinError>>> + Send {
+        #[allow(unreachable_code)]
         ready(todo!())
     }
 
-    fn reset(&self, duration: core::time::Duration) {
+    fn reset(&self, _duration: core::time::Duration) {
         todo!()
     }
 
@@ -212,10 +213,7 @@ impl Yielder for Spawner {
 }
 
 impl AsyncSpawner for Spawner {
-    type JoinHandle<O>
-    where
-        O: Send + 'static,
-    = TaskHandle<O>;
+    type JoinHandle<O: Send + 'static> = TaskHandle<O>;
 
     fn spawn<F>(future: F) -> Self::JoinHandle<F::Output>
     where
@@ -227,10 +225,7 @@ impl AsyncSpawner for Spawner {
 }
 
 impl AsyncLocalSpawner for Spawner {
-    type JoinHandle<O>
-    where
-        O: 'static,
-    = TaskHandle<O>;
+    type JoinHandle<O: 'static> = TaskHandle<O>;
 
     fn spawn_local<F>(future: F) -> Self::JoinHandle<F::Output>
     where
@@ -242,12 +237,9 @@ impl AsyncLocalSpawner for Spawner {
 }
 
 impl AsyncBlockingSpawner for Spawner {
-    type JoinHandle<R>
-    where
-        R: Send + 'static,
-    = TaskHandle<R>;
+    type JoinHandle<R: Send + 'static> = TaskHandle<R>;
 
-    fn spawn_blocking<F, R>(f: F) -> Self::JoinHandle<R>
+    fn spawn_blocking<F, R>(_f: F) -> Self::JoinHandle<R>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
@@ -259,10 +251,7 @@ impl AsyncBlockingSpawner for Spawner {
 impl AsyncAfterSpawner for Spawner {
     type Instant = Instant;
 
-    type JoinHandle<F>
-    where
-        F: Send + 'static,
-    = TaskHandle<F>;
+    type JoinHandle<F: Send + 'static> = TaskHandle<F>;
 
     fn spawn_after<F>(duration: std::time::Duration, future: F) -> Self::JoinHandle<F::Output>
     where
@@ -286,15 +275,15 @@ pub struct Interval {}
 impl AsyncLocalInterval for Interval {
     type Instant = Instant;
 
-    fn reset(&mut self, interval: std::time::Duration) {
+    fn reset(&mut self, _interval: std::time::Duration) {
         todo!()
     }
 
-    fn reset_at(&mut self, instant: Self::Instant) {
+    fn reset_at(&mut self, _instant: Self::Instant) {
         todo!()
     }
 
-    fn poll_tick(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Instant> {
+    fn poll_tick(&mut self, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Instant> {
         todo!()
     }
 }
@@ -304,7 +293,7 @@ impl Stream for Interval {
 
     fn poll_next(
         self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         todo!()
     }
@@ -325,7 +314,7 @@ impl<F: Future> Future for Timeout<F> {
 
     fn poll(
         self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         todo!()
     }
@@ -334,7 +323,7 @@ impl<F: Future> Future for Timeout<F> {
 impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
     type Instant = Instant;
 
-    fn timeout_local(timeout: Duration, fut: F) -> Self
+    fn timeout_local(_timeout: Duration, _fut: F) -> Self
     where
         Self: Sized + Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>>,
         F: Future,
@@ -342,7 +331,7 @@ impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
         todo!()
     }
 
-    fn timeout_local_at(deadline: Self::Instant, fut: F) -> Self
+    fn timeout_local_at(_deadline: Self::Instant, _fut: F) -> Self
     where
         Self: Sized + Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>>,
         F: Future,
@@ -354,7 +343,7 @@ impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
 impl<F: Future + Send> AsyncTimeout<F> for Timeout<F> {
     type Instant = Instant;
 
-    fn timeout(timeout: Duration, fut: F) -> Self
+    fn timeout(_timeout: Duration, _fut: F) -> Self
     where
         F: Future + Send,
         Self:
@@ -363,7 +352,7 @@ impl<F: Future + Send> AsyncTimeout<F> for Timeout<F> {
         todo!()
     }
 
-    fn timeout_at(deadline: Self::Instant, fut: F) -> Self
+    fn timeout_at(_deadline: Self::Instant, _fut: F) -> Self
     where
         F: Future + Send,
         Self:
