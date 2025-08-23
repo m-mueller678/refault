@@ -1,5 +1,6 @@
 use crate::{
     context::executor::NodeId,
+    fragile_future::FragileFuture,
     runtime::Id,
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
@@ -104,11 +105,24 @@ pub struct ConNetSocket {
     local_addr: Addr,
 }
 
+pub type ReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<T>, Error>> + Send;
+pub type SocketReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<T>, Error>> + Send;
+pub type SendFuture = impl Future<Output = Result<(), Error>> + Send;
+pub type SocketSendFuture = impl Future<Output = Result<(), Error>> + Send;
+
 impl ConNetSocket {
-    pub fn send<T: Packet>(
-        &self,
-        packet: Addressed<T>,
-    ) -> impl Future<Output = Result<(), Error>> + use<T> {
+    pub fn open(port: Id) -> Self {
+        ConNetSocket {
+            simulator: simulator(),
+            local_addr: Addr {
+                port,
+                node: NodeId::current(),
+            },
+        }
+    }
+
+    #[define_opaque(SocketSendFuture)]
+    pub fn send<T: Packet>(&self, packet: Addressed<T>) -> SocketSendFuture {
         self.simulator.with(|net| {
             net.send(WrappedPacket {
                 src: self.local_addr,
@@ -118,24 +132,21 @@ impl ConNetSocket {
         })
     }
 
-    pub fn receive<T: Packet>(&self) -> impl Future<Output = Result<Addressed<T>, Error>> + use<T> {
-        self.simulator.with(|net| net.receive(self.local_addr))
+    #[define_opaque(SocketReceiveFuture)]
+    pub fn receive<T: Packet>(&self) -> SocketReceiveFuture<T> {
+        FragileFuture::new(self.simulator.with(|net| net.receive(self.local_addr)))
     }
 }
 
 impl ConNet {
-    pub fn send(
-        &mut self,
-        packet: WrappedPacket,
-    ) -> impl Future<Output = Result<(), Error>> + use<> {
+    #[define_opaque(SendFuture)]
+    pub fn send(&mut self, packet: WrappedPacket) -> SendFuture {
         assert!(packet.src.node == NodeId::current());
-        (self.send_function)(packet)
+        FragileFuture::new((self.send_function)(packet))
     }
 
-    pub fn receive<T: Packet>(
-        &mut self,
-        address: Addr,
-    ) -> impl Future<Output = Result<Addressed<T>, Error>> + use<T> {
+    #[define_opaque(ReceiveFuture)]
+    pub fn receive<T: Packet>(&mut self, address: Addr) -> ReceiveFuture<T> {
         assert!(address.node == NodeId::current());
         self.receive_any(TypeId::of::<T>(), address).map(|result| {
             result.map(|packet| Addressed {
@@ -149,9 +160,9 @@ impl ConNet {
         &mut self,
         ty: TypeId,
         address: Addr,
-    ) -> impl Future<Output = Result<Addressed, Error>> + use<> {
+    ) -> impl Future<Output = Result<Addressed, Error>> + Send + use<> {
         let inbox = self.with_queue((address, ty), |inbox| inbox.clone());
-        async move { inbox.receive().await.unwrap() }
+        FragileFuture::new(async move { inbox.receive().await.unwrap() })
     }
 
     /// Cause the destination node to receive the packet at the specified time.

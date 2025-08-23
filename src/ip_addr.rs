@@ -22,15 +22,28 @@ pub struct IpAddrSimulator {
     override_next: Option<(Ipv4Addr, Ipv6Addr)>,
 }
 
+pub struct LookupError {
+    addr: SocketAddr,
+}
+
+impl From<LookupError> for std::io::Error {
+    fn from(value: LookupError) -> Self {
+        std::io::Error::new(
+            std::io::ErrorKind::NetworkUnreachable,
+            format!("no node with this ip address: {:?}", value.addr),
+        )
+    }
+}
+
 impl IpAddrSimulator {
     // Translate an ip based socket address into a simulated network address.
-    pub fn lookup_socket_addr(&self, addr: SocketAddr) -> Option<Addr> {
-        let node = *self.to_node.get(&addr.ip())?;
+    pub fn lookup_socket_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
+        let node = *self.to_node.get(&addr.ip()).ok_or(LookupError { addr })?;
         let port = match addr.ip() {
             IpAddr::V4(_) => self.v4_ports.get(addr.port() as usize),
             IpAddr::V6(_) => self.v6_ports.get(addr.port() as usize),
         };
-        Some(Addr { node, port })
+        Ok(Addr { node, port })
     }
 
     pub fn local_ip(&self, v6: bool) -> IpAddr {
