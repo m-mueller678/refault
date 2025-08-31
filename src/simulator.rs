@@ -75,8 +75,7 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
             });
         });
         let simulator: &mut dyn Simulator = &mut **simulator;
-        let ret = f(Some((simulator as &mut dyn Any).downcast_mut().unwrap()));
-        ret
+        f(Some((simulator as &mut dyn Any).downcast_mut().unwrap()))
     } else {
         f(None)
     }

@@ -7,6 +7,7 @@ use super::Context2;
 pub struct Id(u64);
 
 impl Id {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Context2::with(|cx| {
             let id = cx.pre_next_global_id.get() + 1;
@@ -28,6 +29,8 @@ impl IdRange {
         })
     }
 
+    // range is always non-empty
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         (self.0.end() - self.0.start() + 1) as usize
     }

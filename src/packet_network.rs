@@ -41,11 +41,8 @@ pub struct Addressed<T = Box<dyn Packet>> {
 ///
 /// Using this prevents you from accidentally ending up with the TypeId of `Box<dyn Packet>` rather than the id of the contained value.
 pub fn packet_type_id(p: &dyn Packet) -> TypeId {
-    let type_id = (*p).type_id();
-    type_id
+    (*p).type_id()
 }
-
-pub struct PerfectConnectivity(Duration);
 
 /// The function that is invoked to send a packet.
 ///
@@ -78,7 +75,7 @@ pub struct WrappedPacket {
     pub content: Box<dyn Packet>,
 }
 
-struct ConNet {
+pub struct ConNet {
     send_function: SendFunction,
     receivers: HashMap<(Addr, TypeId), Rc<Inbox>>,
 }
