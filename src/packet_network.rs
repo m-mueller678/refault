@@ -136,6 +136,13 @@ impl ConNetSocket {
 }
 
 impl ConNet {
+    pub fn new(send_function: SendFunction) -> Self {
+        Self {
+            send_function,
+            receivers: HashMap::new(),
+        }
+    }
+
     #[define_opaque(SendFuture)]
     pub fn send(&mut self, packet: WrappedPacket) -> SendFuture {
         assert!(packet.src.node == NodeId::current());

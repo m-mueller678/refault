@@ -52,17 +52,20 @@ impl IpAddrSimulator {
         Ok(Addr { node, port })
     }
 
-    pub fn local_ip(&self, v6: bool) -> IpAddr {
-        let current = NodeId::current();
-        if current == NodeId::INIT {
+    pub fn get_ip_for_node(&self, node: NodeId, v6: bool) -> IpAddr {
+        if node == NodeId::INIT {
             panic!("init node is not assigned an ip address");
         }
-        let ips = self.to_ip.get(&current).unwrap();
+        let ips = self.to_ip.get(&node).unwrap();
         if v6 {
             IpAddr::V6(ips.1)
         } else {
             IpAddr::V4(ips.0)
         }
+    }
+
+    pub fn local_ip(&self, v6: bool) -> IpAddr {
+        self.get_ip_for_node(NodeId::current(), v6)
     }
 
     /// Override the address given to the next node created.
