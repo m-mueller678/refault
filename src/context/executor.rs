@@ -403,17 +403,25 @@ impl NodeId {
     ///
     /// Can only be called from within a simulation.
     pub fn create_node() -> NodeId {
-        with_context(|cx| {
-            let id = NodeId(cx.executor.nodes.len());
-            assert!(
-                !cx.executor.final_stopped,
-                "node spawn during simulation shutdown"
-            );
-            cx.executor.nodes.push(NodeData {
-                run_level: NodeRunLevel::Running,
-                tasks: HashSet::new(),
+        Context2::with(|cx2| {
+            let id = cx2.with_cx(|cx| {
+                let id = NodeId(cx.executor.nodes.len());
+                assert!(
+                    !cx.executor.final_stopped,
+                    "node spawn during simulation shutdown"
+                );
+                cx.executor.nodes.push(NodeData {
+                    run_level: NodeRunLevel::Running,
+                    tasks: HashSet::new(),
+                });
+                cx.event_handler.handle_event(Event::NodeSpawned(id));
+                id
             });
-            cx.event_handler.handle_event(Event::NodeSpawned(id));
+            cx2.node_scope(id, || {
+                for_all_simulators(cx2, true, |s| {
+                    s.create_node();
+                });
+            });
             id
         })
     }
@@ -494,7 +502,7 @@ impl NodeId {
                     )
                 }))
             }
-            for_all_simulators(false, |x| x.stop_node());
+            for_all_simulators(cx2, false, |x| x.stop_node());
         });
     }
 

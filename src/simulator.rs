@@ -128,29 +128,31 @@ impl<S: NodeSimulator> SimulatorHandle<PerNode<S>> {
     }
 }
 
-pub(crate) fn for_all_simulators(forward: bool, mut f: impl FnMut(&mut dyn Simulator)) {
-    let len = with_context(|cx| cx.simulators.len());
+pub(crate) fn for_all_simulators(
+    cx2: &Context2,
+    forward: bool,
+    mut f: impl FnMut(&mut dyn Simulator),
+) {
+    let len = cx2.with_cx(|cx| cx.simulators.len());
     let mut simulator = None;
-    Context2::with(|cx2| {
-        for i in 0..len {
-            let index = if forward { i } else { len - 1 - i };
-            let swap = |s: &mut Option<_>| {
-                mem::swap(
-                    &mut cx2.context.borrow_mut().as_mut().unwrap().simulators[index],
-                    s,
-                )
-            };
-            swap(&mut simulator);
-            f(&mut **simulator
-                .as_mut()
-                .expect("simulator already mutably borrowed"));
-            swap(&mut simulator);
-        }
-        assert_eq!(
-            cx2.context.borrow_mut().as_mut().unwrap().simulators.len(),
-            len
-        );
-    });
+    for i in 0..len {
+        let index = if forward { i } else { len - 1 - i };
+        let swap = |s: &mut Option<_>| {
+            mem::swap(
+                &mut cx2.context.borrow_mut().as_mut().unwrap().simulators[index],
+                s,
+            )
+        };
+        swap(&mut simulator);
+        f(&mut **simulator
+            .as_mut()
+            .expect("simulator already mutably borrowed"));
+        swap(&mut simulator);
+    }
+    assert_eq!(
+        cx2.context.borrow_mut().as_mut().unwrap().simulators.len(),
+        len
+    );
 }
 
 /// A node-scoped singleton.
