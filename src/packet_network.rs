@@ -6,7 +6,7 @@ use crate::{
     time::sleep_until,
 };
 use futures::{FutureExt, never::Never};
-use futures_intrusive::channel::UnbufferedChannel;
+use futures_intrusive::channel::LocalChannel;
 use std::time::Duration;
 use std::{
     any::{Any, TypeId},
@@ -80,7 +80,7 @@ pub struct ConNet {
     receivers: HashMap<(Addr, TypeId), Rc<Inbox>>,
 }
 
-type Inbox = UnbufferedChannel<Result<Addressed, Error>>;
+type Inbox = LocalChannel<Result<Addressed, Error>, [Result<Addressed, Error>; 8]>;
 
 impl Simulator for ConNet {
     fn start_node(&mut self) {
