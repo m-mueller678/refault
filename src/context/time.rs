@@ -11,8 +11,7 @@
 
 use crate::context::with_context;
 use crate::event::{Event, EventHandler};
-use crate::fragile_future::fragile_pin;
-use fragile::Fragile;
+use crate::fragile_future::{Constraint, Fragile2, NodeBound};
 use pin_arc::{PinRc, PinRcStorage};
 use priority_queue::PriorityQueue;
 use std::cell::Cell;
@@ -27,7 +26,7 @@ pin_project_lite::pin_project! {
     #[must_use]
     pub struct Sleep {
         #[pin]
-        state: Fragile<PinRcStorage<Cell<TimeFutureState>>>,
+        state: Fragile2<PinRcStorage<Cell<TimeFutureState>>,NodeBound>,
     }
 
     impl PinnedDrop for Sleep {
@@ -36,7 +35,7 @@ pin_project_lite::pin_project! {
                 cx.executor
                     .time_scheduler
                     .upcoming_events
-                    .remove(&QueueEntry(fragile_pin(this.project().state.as_ref()).create_handle()));
+                    .remove(&QueueEntry(Fragile2::as_pin_ref(this.project().state.as_ref()).create_handle()));
             });
         }
     }
@@ -51,7 +50,7 @@ enum TimeFutureState {
 impl Sleep {
     fn new(deadline: Instant) -> Self {
         Sleep {
-            state: Fragile::new(PinRcStorage::new(Cell::new(TimeFutureState::Init(
+            state: NodeBound::wrap(PinRcStorage::new(Cell::new(TimeFutureState::Init(
                 deadline,
             )))),
         }
@@ -63,7 +62,7 @@ impl Future for Sleep {
 
     fn poll(self: Pin<&mut Self>, fut_cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state_storage = self.project().state;
-        let state = fragile_pin(state_storage.as_ref()).get_pin();
+        let state = Fragile2::as_pin_ref(state_storage.as_ref()).get_pin();
         match state.replace(TimeFutureState::Taken) {
             TimeFutureState::Init(instant) => with_context(|cx| {
                 if cx.executor.time_scheduler.now >= instant {
@@ -71,7 +70,7 @@ impl Future for Sleep {
                 } else {
                     state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
                     cx.executor.time_scheduler.upcoming_events.push(
-                        QueueEntry(fragile_pin(state_storage.as_ref()).create_handle()),
+                        QueueEntry(Fragile2::as_pin_ref(state_storage.as_ref()).create_handle()),
                         Reverse(instant),
                     );
                     Poll::Pending

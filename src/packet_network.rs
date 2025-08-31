@@ -1,21 +1,22 @@
 use crate::{
     context::executor::NodeId,
-    fragile_future::FragileFuture,
+    fragile_future::{Constraint, Fragile2, NodeBound},
     runtime::Id,
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
 };
-use futures::{FutureExt, never::Never};
+use futures::never::Never;
 use futures_intrusive::channel::LocalChannel;
-use std::time::Duration;
+use impl_more::impl_deref_and_mut;
 use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
+    any::{Any, TypeId, type_name},
+    collections::{HashMap, hash_map::Entry},
     io::Error,
     pin::Pin,
     rc::Rc,
     time::Instant,
 };
+use std::{marker::PhantomData, time::Duration};
 
 pub trait Packet: Any {}
 impl Packet for () {}
@@ -35,6 +36,15 @@ pub struct Addr {
 pub struct Addressed<T = Box<dyn Packet>> {
     pub addr: Addr,
     pub content: T,
+}
+
+impl<T> Addressed<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Addressed<U> {
+        Addressed {
+            addr: self.addr,
+            content: f(self.content),
+        }
+    }
 }
 
 /// Get the TypeId of a packet.
@@ -97,30 +107,69 @@ impl Simulator for ConNet {
     }
 }
 
-pub struct ConNetSocket {
+pub struct ConNetSocket<T>(Fragile2<ConNetSocketUnsend<T>, NodeBound>);
+impl_deref_and_mut!(<T> in ConNetSocket<T> => Fragile2<ConNetSocketUnsend<T>, NodeBound>);
+
+struct ConNetSocketUnsend<T> {
     simulator: SimulatorHandle<ConNet>,
+    inbox: Rc<Inbox>,
     local_addr: Addr,
+    _p: PhantomData<fn(T) -> T>,
 }
 
-pub type ReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<T>, Error>> + Send;
 pub type SocketReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<T>, Error>> + Send;
 pub type SendFuture = impl Future<Output = Result<(), Error>> + Send;
 pub type SocketSendFuture = impl Future<Output = Result<(), Error>> + Send;
 
-impl ConNetSocket {
-    pub fn open(port: Id) -> Self {
-        ConNetSocket {
-            simulator: simulator(),
-            local_addr: Addr {
-                port,
-                node: NodeId::current(),
-            },
-        }
+pub struct AddrInUseError {
+    addr: Addr,
+    ty: &'static str,
+}
+
+impl From<AddrInUseError> for Error {
+    fn from(value: AddrInUseError) -> Self {
+        Error::new(
+            std::io::ErrorKind::AddrInUse,
+            format!(
+                "socket exists for address {:?}, type {:?}",
+                value.addr, value.ty
+            ),
+        )
+    }
+}
+
+impl<T: Packet> ConNetSocket<T> {
+    pub fn open(port: Id) -> Result<Self, AddrInUseError> {
+        Ok(ConNetSocket(NodeBound::wrap(Self::open_unsend(port)?)))
+    }
+
+    fn open_unsend(port: Id) -> Result<ConNetSocketUnsend<T>, AddrInUseError> {
+        let addr = Addr {
+            port,
+            node: NodeId::current(),
+        };
+        let simulator = simulator::<ConNet>();
+        simulator.with(|net| match net.receivers.entry((addr, TypeId::of::<T>())) {
+            Entry::Occupied(_) => Err(AddrInUseError {
+                addr,
+                ty: type_name::<T>(),
+            }),
+            Entry::Vacant(x) => {
+                let inbox = Rc::new(Inbox::new());
+                x.insert(inbox.clone());
+                Ok(ConNetSocketUnsend {
+                    inbox,
+                    _p: PhantomData,
+                    simulator: simulator.clone(),
+                    local_addr: addr,
+                })
+            }
+        })
     }
 
     #[define_opaque(SocketSendFuture)]
-    pub fn send<T: Packet>(&self, packet: Addressed<T>) -> SocketSendFuture {
-        self.simulator.with(|net| {
+    pub fn send(&self, packet: Addressed<T>) -> SocketSendFuture {
+        self.0.simulator.with(|net| {
             net.send(WrappedPacket {
                 src: self.local_addr,
                 dst: packet.addr,
@@ -130,8 +179,15 @@ impl ConNetSocket {
     }
 
     #[define_opaque(SocketReceiveFuture)]
-    pub fn receive<T: Packet>(&self) -> SocketReceiveFuture<T> {
-        FragileFuture::new(self.simulator.with(|net| net.receive(self.local_addr)))
+    pub fn receive(&self) -> SocketReceiveFuture<T> {
+        let inbox = self.inbox.clone();
+        NodeBound::wrap(async move {
+            inbox
+                .receive()
+                .await
+                .unwrap()
+                .map(|addresesd| addresesd.map(|x| *(x as Box<dyn Any>).downcast().unwrap()))
+        })
     }
 }
 
@@ -146,27 +202,7 @@ impl ConNet {
     #[define_opaque(SendFuture)]
     pub fn send(&mut self, packet: WrappedPacket) -> SendFuture {
         assert!(packet.src.node == NodeId::current());
-        FragileFuture::new((self.send_function)(packet))
-    }
-
-    #[define_opaque(ReceiveFuture)]
-    pub fn receive<T: Packet>(&mut self, address: Addr) -> ReceiveFuture<T> {
-        assert!(address.node == NodeId::current());
-        self.receive_any(TypeId::of::<T>(), address).map(|result| {
-            result.map(|packet| Addressed {
-                content: *(packet.content as Box<dyn Any>).downcast().unwrap(),
-                addr: packet.addr,
-            })
-        })
-    }
-
-    fn receive_any(
-        &mut self,
-        ty: TypeId,
-        address: Addr,
-    ) -> impl Future<Output = Result<Addressed, Error>> + Send + use<> {
-        let inbox = self.with_queue((address, ty), |inbox| inbox.clone());
-        FragileFuture::new(async move { inbox.receive().await.unwrap() })
+        NodeBound::wrap((self.send_function)(packet))
     }
 
     /// Cause the destination node to receive the packet at the specified time.

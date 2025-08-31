@@ -23,7 +23,7 @@ use std::{
 
 pub struct UdpSocket {
     inner: Fragile<UdpSocketInner>,
-    socket: ConNetSocket,
+    socket: ConNetSocket<UdpDatagram>,
     local_addr: SocketAddr,
     ip: SimulatorHandle<IpAddrSimulator>,
 }
@@ -302,7 +302,7 @@ impl UdpSocket {
             }
             addr.port
         };
-        let socket = ConNetSocket::open(port);
+        let socket = ConNetSocket::open(port)?;
         Ok(UdpSocket {
             socket,
             local_addr: SocketAddr::new(ip, local_addr.port()),
