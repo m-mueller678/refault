@@ -5,6 +5,7 @@ use crate::{
     context::{Context2, with_context},
 };
 use cooked_waker::{IntoWaker, WakeRef};
+use fragile::Fragile;
 use futures_channel::oneshot;
 use std::collections::HashSet;
 use std::error::Error;
@@ -20,7 +21,6 @@ use std::{
     task::Context,
 };
 
-use super::NotSendSync;
 use super::id::Id;
 
 pub struct ExecutorQueue {
@@ -111,10 +111,6 @@ impl<F: Future> TaskDyn for Task<F> {
     }
 }
 
-//TODO fix this.
-unsafe impl<T> Send for TaskHandle<T> {}
-unsafe impl<T> Sync for TaskHandle<T> {}
-
 pin_project_lite::pin_project! {
     /// A handle to a task.
     ///
@@ -180,7 +176,7 @@ impl<T> TaskHandle<T> {
 ///
 /// Dropping this will not abort the task.
 #[derive(Clone)]
-pub struct AbortHandle(Arc<TaskShared>, NotSendSync);
+pub struct AbortHandle(Fragile<Arc<TaskShared>>);
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
@@ -250,12 +246,12 @@ impl Executor {
         };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: AbortHandle(task_entry.shared.clone(), NotSendSync::default()),
+            abort: AbortHandle(Fragile::new(task_entry.shared.clone())),
             droppable: false,
         };
         self.tasks.insert(task_id, task_entry);
         self.nodes[node.0].tasks.insert(task_id);
-        <TaskShared as WakeRef>::wake_by_ref(&*task_handle.abort.0);
+        <TaskShared as WakeRef>::wake_by_ref(task_handle.abort.0.get());
         task_handle
     }
 
@@ -363,9 +359,10 @@ impl AbortHandle {
     }
 
     fn abort_inner(&self) {
-        (Context2::with_in_node(self.0.node, |cx| {
+        let this = self.0.get();
+        (Context2::with_in_node(this.node, |cx| {
             let task = abort_local(
-                self.0.id,
+                this.id,
                 cx.queue.borrow_mut().as_mut().unwrap(),
                 &mut cx.context.borrow_mut().as_mut().unwrap().executor.tasks,
             );
