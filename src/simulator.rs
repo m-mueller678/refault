@@ -8,6 +8,11 @@
 //! At the end of a simulation, all associated simulators will be destroyed.
 //! There is at most one object for each simulator type in a simulation.
 
+use crate::{
+    check_send::{CheckSend, Constraint, SimBound},
+    context::{Context2, executor::NodeId, with_context},
+};
+use scopeguard::guard;
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -15,11 +20,6 @@ use std::{
     mem,
     rc::Rc,
 };
-
-use fragile::Fragile;
-use scopeguard::guard;
-
-use crate::context::{Context2, executor::NodeId, with_context};
 
 /// A simulation-scoped singleton.
 ///
@@ -81,7 +81,7 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
     }
 }
 
-pub struct SimulatorHandle<S: Simulator>(Fragile<PhantomData<Rc<RefCell<S>>>>);
+pub struct SimulatorHandle<S: Simulator>(CheckSend<PhantomData<Rc<RefCell<S>>>, SimBound>);
 
 impl<S: Simulator> Clone for SimulatorHandle<S> {
     fn clone(&self) -> Self {
@@ -98,7 +98,7 @@ pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
             panic!("simulator does not exist: {}", type_name::<S>());
         }
     });
-    SimulatorHandle(Fragile::new(PhantomData))
+    SimulatorHandle(SimBound::wrap(PhantomData))
 }
 
 impl<S: Simulator> SimulatorHandle<S> {
@@ -107,7 +107,7 @@ impl<S: Simulator> SimulatorHandle<S> {
     /// This acquires an exclusive lock on the simulator.
     /// Attempting to acquire another reference to the same simulator within `f` will panic.
     pub fn with<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
-        self.0.get();
+        let _: PhantomData<_> = *self.0;
         with_simulator_option(|mut x| f(x.as_mut().unwrap()))
     }
 }

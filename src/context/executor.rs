@@ -1,3 +1,4 @@
+use crate::check_send::{CheckSend, Constraint, SimBound};
 use crate::event::Event;
 use crate::simulator::for_all_simulators;
 use crate::{
@@ -5,7 +6,6 @@ use crate::{
     context::{Context2, with_context},
 };
 use cooked_waker::{IntoWaker, WakeRef};
-use fragile::Fragile;
 use futures_channel::oneshot;
 use std::collections::HashSet;
 use std::error::Error;
@@ -176,7 +176,7 @@ impl<T> TaskHandle<T> {
 ///
 /// Dropping this will not abort the task.
 #[derive(Clone)]
-pub struct AbortHandle(Fragile<Arc<TaskShared>>);
+pub struct AbortHandle(CheckSend<Arc<TaskShared>, SimBound>);
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
@@ -246,12 +246,12 @@ impl Executor {
         };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: AbortHandle(Fragile::new(task_entry.shared.clone())),
+            abort: AbortHandle(SimBound::wrap(task_entry.shared.clone())),
             droppable: false,
         };
         self.tasks.insert(task_id, task_entry);
         self.nodes[node.0].tasks.insert(task_id);
-        <TaskShared as WakeRef>::wake_by_ref(task_handle.abort.0.get());
+        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.0);
         task_handle
     }
 
@@ -359,7 +359,7 @@ impl AbortHandle {
     }
 
     fn abort_inner(&self) {
-        let this = self.0.get();
+        let this = &*self.0;
         (Context2::with_in_node(this.node, |cx| {
             let task = abort_local(
                 this.id,

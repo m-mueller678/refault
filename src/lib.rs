@@ -12,6 +12,6 @@ pub mod runtime;
 pub mod simulator;
 pub mod udp;
 pub use context::time;
-mod fragile_future;
+mod check_send;
 
 pub use smallvec;

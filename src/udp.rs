@@ -1,5 +1,6 @@
 use crate::{
     agnostic_lite_runtime::SimRuntime,
+    check_send::{CheckSend, Constraint, NodeBound},
     ip_addr::IpAddrSimulator,
     packet_network::{Addressed, ConNetSocket, Packet, SocketReceiveFuture},
     runtime::NodeId,
@@ -8,7 +9,6 @@ use crate::{
 use agnostic_net::ToSocketAddrs;
 use bytes::Bytes;
 use either::Either::{Left, Right};
-use fragile::Fragile;
 use futures::FutureExt;
 use std::{
     cell::Cell,
@@ -22,7 +22,7 @@ use std::{
 };
 
 pub struct UdpSocket {
-    inner: Fragile<UdpSocketInner>,
+    inner: CheckSend<UdpSocketInner, NodeBound>,
     socket: ConNetSocket<UdpDatagram>,
     local_addr: SocketAddr,
     ip: SimulatorHandle<IpAddrSimulator>,
@@ -93,7 +93,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
                 "could not resolve to any address",
             ));
         };
-        self.inner.get().peer_addr.set(Some(addr));
+        self.inner.peer_addr.set(Some(addr));
         Ok(())
     }
 
@@ -102,14 +102,14 @@ impl agnostic_net::UdpSocket for UdpSocket {
     }
 
     fn peer_addr(&self) -> Result<SocketAddr> {
-        self.inner.get().peer()
+        self.inner.peer()
     }
 
     async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
         loop {
             let (recv, peer_addr) = {
-                let inner = self.inner.get();
-                (self.recv_inner(inner), inner.peer()?)
+                let inner = &*self.inner;
+                (self.recv_inner(&self.inner), inner.peer()?)
             };
             let packet = recv.await?;
             debug_assert!(packet.dst == self.local_addr);
@@ -122,7 +122,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
     }
 
     async fn recv_from(&self, buf: &mut [u8]) -> std::io::Result<(usize, SocketAddr)> {
-        let packet: UdpDatagram = self.recv_inner(self.inner.get()).await?;
+        let packet: UdpDatagram = self.recv_inner(&self.inner).await?;
         debug_assert!(packet.dst == self.local_addr);
         buf[..packet.bytes.len()].copy_from_slice(&packet.bytes);
         Ok((packet.bytes.len(), packet.src))
@@ -131,7 +131,6 @@ impl agnostic_net::UdpSocket for UdpSocket {
     async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
         let dst = self
             .inner
-            .get()
             .peer_addr
             .get()
             .ok_or_else(|| Error::new(ErrorKind::NotConnected, "not conncted"))?;
@@ -149,7 +148,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
     }
 
     async fn peek(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let peer = self.inner.get().peer()?;
+        let peer = self.inner.peer()?;
         loop {
             return match poll_fn(|cx| self.poll_recv(cx)).await {
                 Ok(x) => {
@@ -307,7 +306,7 @@ impl UdpSocket {
             socket,
             local_addr: SocketAddr::new(ip, local_addr.port()),
             ip: simulator(),
-            inner: Fragile::new(UdpSocketInner {
+            inner: NodeBound::wrap(UdpSocketInner {
                 peer_addr: Cell::new(None),
                 receive_state: Cell::new(ReceiveState::None),
             }),
@@ -355,8 +354,8 @@ impl UdpSocket {
     }
 
     fn poll_recv(&self, cx: &mut Context) -> Poll<Result<UdpDatagram>> {
-        let get = self.inner.get();
-        let mut fut = match get.receive_state.replace(ReceiveState::Taken) {
+        let inner = &*self.inner;
+        let mut fut = match inner.receive_state.replace(ReceiveState::Taken) {
             ReceiveState::None => Box::pin(self.socket.receive()),
             ReceiveState::Future(f) => f,
             ReceiveState::Taken => unreachable!(),
@@ -367,7 +366,7 @@ impl UdpSocket {
         match fut.as_mut().poll(cx) {
             Poll::Ready(x) => Poll::Ready(x.map(|x| x.content)),
             std::task::Poll::Pending => {
-                get.receive_state.set(ReceiveState::Future(fut));
+                inner.receive_state.set(ReceiveState::Future(fut));
                 Poll::Pending
             }
         }
@@ -375,7 +374,7 @@ impl UdpSocket {
 
     fn put_receive_state(&self, s: ReceiveState) {
         assert!(matches!(
-            self.inner.get().receive_state.replace(s),
+            self.inner.receive_state.replace(s),
             ReceiveState::Taken
         ))
     }

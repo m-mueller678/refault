@@ -1,6 +1,6 @@
 use crate::{
+    check_send::{CheckSend, Constraint, NodeBound},
     context::executor::NodeId,
-    fragile_future::{Constraint, Fragile2, NodeBound},
     runtime::Id,
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
@@ -107,10 +107,10 @@ impl Simulator for ConNet {
     }
 }
 
-pub struct ConNetSocket<T>(Fragile2<ConNetSocketUnsend<T>, NodeBound>);
-impl_deref_and_mut!(<T> in ConNetSocket<T> => Fragile2<ConNetSocketUnsend<T>, NodeBound>);
+pub struct ConNetSocket<T>(CheckSend<ConNetSocketUnsend<T>, NodeBound>);
+impl_deref_and_mut!(<T> in ConNetSocket<T> => CheckSend<ConNetSocketUnsend<T>, NodeBound>);
 
-struct ConNetSocketUnsend<T> {
+pub struct ConNetSocketUnsend<T> {
     simulator: SimulatorHandle<ConNet>,
     inbox: Rc<Inbox>,
     local_addr: Addr,

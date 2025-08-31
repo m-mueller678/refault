@@ -9,9 +9,9 @@
 //! Within the simulation, the standard library time functions return simulated time.
 //! To control the starting time of the simulation, see [with_simulation_start_time](crate::runtime::Runtime::with_simulation_start_time).
 
+use crate::check_send::{CheckSend, Constraint, NodeBound};
 use crate::context::with_context;
 use crate::event::{Event, EventHandler};
-use crate::fragile_future::{Constraint, Fragile2, NodeBound};
 use pin_arc::{PinRc, PinRcStorage};
 use priority_queue::PriorityQueue;
 use std::cell::Cell;
@@ -26,7 +26,7 @@ pin_project_lite::pin_project! {
     #[must_use]
     pub struct Sleep {
         #[pin]
-        state: Fragile2<PinRcStorage<Cell<TimeFutureState>>,NodeBound>,
+        state: CheckSend<PinRcStorage<Cell<TimeFutureState>>,NodeBound>,
     }
 
     impl PinnedDrop for Sleep {
@@ -35,7 +35,7 @@ pin_project_lite::pin_project! {
                 cx.executor
                     .time_scheduler
                     .upcoming_events
-                    .remove(&QueueEntry(Fragile2::as_pin_ref(this.project().state.as_ref()).create_handle()));
+                    .remove(&QueueEntry(CheckSend::as_pin_ref(this.project().state.as_ref()).create_handle()));
             });
         }
     }
@@ -62,7 +62,7 @@ impl Future for Sleep {
 
     fn poll(self: Pin<&mut Self>, fut_cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state_storage = self.project().state;
-        let state = Fragile2::as_pin_ref(state_storage.as_ref()).get_pin();
+        let state = CheckSend::as_pin_ref(state_storage.as_ref()).get_pin();
         match state.replace(TimeFutureState::Taken) {
             TimeFutureState::Init(instant) => with_context(|cx| {
                 if cx.executor.time_scheduler.now >= instant {
@@ -70,7 +70,7 @@ impl Future for Sleep {
                 } else {
                     state.set(TimeFutureState::Waiting(fut_cx.waker().clone()));
                     cx.executor.time_scheduler.upcoming_events.push(
-                        QueueEntry(Fragile2::as_pin_ref(state_storage.as_ref()).create_handle()),
+                        QueueEntry(CheckSend::as_pin_ref(state_storage.as_ref()).create_handle()),
                         Reverse(instant),
                     );
                     Poll::Pending

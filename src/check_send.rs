@@ -5,18 +5,21 @@ use std::{
     pin::Pin,
 };
 
+#[allow(private_bounds)]
 pub trait Constraint: Private {
-    fn wrap<T>(x: T) -> Fragile2<T, Self> {
-        Fragile2::new(x)
+    fn wrap<T>(x: T) -> CheckSend<T, Self> {
+        CheckSend::new(x)
     }
 }
 
-trait Private: Sized {
+trait Private: Clone + Sized {
     fn check(&self);
     fn new() -> Self;
 }
 
+#[derive(Clone)]
 pub struct NodeBound(NodeId);
+#[derive(Clone)]
 pub struct SimBound(());
 
 impl Private for NodeBound {
@@ -36,9 +39,10 @@ impl Private for SimBound {
 impl Constraint for NodeBound {}
 impl Constraint for SimBound {}
 
-pub struct Fragile2<T, C: Constraint>(Fragile<(T, C)>);
+#[derive(Clone)]
+pub struct CheckSend<T, C: Constraint>(Fragile<(T, C)>);
 
-impl<T, C: Constraint> Deref for Fragile2<T, C> {
+impl<T, C: Constraint> Deref for CheckSend<T, C> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -48,7 +52,7 @@ impl<T, C: Constraint> Deref for Fragile2<T, C> {
     }
 }
 
-impl<T, C: Constraint> DerefMut for Fragile2<T, C> {
+impl<T, C: Constraint> DerefMut for CheckSend<T, C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let x = self.0.get_mut();
         x.1.check();
@@ -56,7 +60,7 @@ impl<T, C: Constraint> DerefMut for Fragile2<T, C> {
     }
 }
 
-impl<F: Future, C: Constraint> Future for Fragile2<F, C> {
+impl<F: Future, C: Constraint> Future for CheckSend<F, C> {
     type Output = F::Output;
 
     fn poll(
@@ -67,15 +71,15 @@ impl<F: Future, C: Constraint> Future for Fragile2<F, C> {
     }
 }
 
-impl<T, C: Constraint> Fragile2<T, C> {
+impl<T, C: Constraint> CheckSend<T, C> {
     fn new(x: T) -> Self {
-        Fragile2(Fragile::new((x, C::new())))
+        CheckSend(Fragile::new((x, C::new())))
     }
     pub fn as_pin_mut(this: Pin<&mut Self>) -> Pin<&mut T> {
         unsafe { Pin::new_unchecked(&mut *Pin::get_unchecked_mut(this)) }
     }
 
     pub fn as_pin_ref(this: Pin<&Self>) -> Pin<&T> {
-        unsafe { Pin::new_unchecked(&*this.get_ref()) }
+        unsafe { Pin::new_unchecked(&**this.get_ref()) }
     }
 }
