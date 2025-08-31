@@ -35,6 +35,12 @@ impl From<LookupError> for std::io::Error {
     }
 }
 
+impl Default for IpAddrSimulator {
+    fn default() -> Self {
+        Self::new(Self::private_ipv4(), Self::unique_local_address_hosts())
+    }
+}
+
 impl IpAddrSimulator {
     // Translate an ip based socket address into a simulated network address.
     pub fn lookup_socket_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
@@ -47,7 +53,11 @@ impl IpAddrSimulator {
     }
 
     pub fn local_ip(&self, v6: bool) -> IpAddr {
-        let ips = self.to_ip.get(&NodeId::current()).unwrap();
+        let current = NodeId::current();
+        if current == NodeId::INIT {
+            panic!("init node is not assigned an ip address");
+        }
+        let ips = self.to_ip.get(&current).unwrap();
         if v6 {
             IpAddr::V6(ips.1)
         } else {
@@ -79,6 +89,30 @@ impl IpAddrSimulator {
             gen_v6,
             override_next: None,
         }
+    }
+
+    pub fn private_ipv4() -> Box<dyn FnMut() -> Ipv4Addr> {
+        // avoid subnet and broadcast address.
+        const BASE: u32 = 10 << 24;
+        const LIMIT: u32 = (11 << 24) - 1;
+        let mut counter = BASE;
+        Box::new(move || {
+            counter += 1;
+            assert!(counter < LIMIT, "out of ipv4 addresses");
+            Ipv4Addr::from_bits(counter)
+        })
+    }
+
+    pub fn unique_local_address_hosts() -> Box<dyn FnMut() -> Ipv6Addr> {
+        // generate from 2^8 contiguous "random" ids to match size of private ipv4 space.
+        const BASE: u64 = 0xfd_e0e09f64 << 24;
+        const LIMIT: u64 = BASE + (1 << 24);
+        let mut counter = BASE;
+        Box::new(move || {
+            counter += 1;
+            assert!(counter < LIMIT, "out of ipv6 addresses");
+            Ipv6Addr::from_bits((counter as u128) << 64)
+        })
     }
 }
 
