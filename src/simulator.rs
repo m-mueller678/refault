@@ -16,6 +16,7 @@ use std::{
     rc::Rc,
 };
 
+use fragile::Fragile;
 use scopeguard::guard;
 
 use crate::context::{Context2, executor::NodeId, with_context};
@@ -81,11 +82,11 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
     }
 }
 
-pub struct SimulatorHandle<S: Simulator>(PhantomData<Rc<RefCell<S>>>);
+pub struct SimulatorHandle<S: Simulator>(Fragile<PhantomData<Rc<RefCell<S>>>>);
 
 impl<S: Simulator> Clone for SimulatorHandle<S> {
     fn clone(&self) -> Self {
-        Self(PhantomData)
+        Self(self.0.clone())
     }
 }
 
@@ -98,7 +99,7 @@ pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
             panic!("simulator does not exist: {}", type_name::<S>());
         }
     });
-    SimulatorHandle(PhantomData)
+    SimulatorHandle(Fragile::new(PhantomData))
 }
 
 impl<S: Simulator> SimulatorHandle<S> {
@@ -107,6 +108,7 @@ impl<S: Simulator> SimulatorHandle<S> {
     /// This acquires an exclusive lock on the simulator.
     /// Attempting to acquire another reference to the same simulator within `f` will panic.
     pub fn with<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
+        self.0.get();
         with_simulator_option(|mut x| f(x.as_mut().unwrap()))
     }
 }

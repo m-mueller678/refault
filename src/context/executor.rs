@@ -144,9 +144,9 @@ pin_project_lite::pin_project! {
 #[derive(Debug)]
 pub struct TaskAborted(());
 
-impl Into<io::Error> for TaskAborted {
-    fn into(self) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, "aborted")
+impl From<TaskAborted> for io::Error {
+    fn from(_value: TaskAborted) -> Self {
+        io::Error::other("aborted")
     }
 }
 

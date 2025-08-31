@@ -345,7 +345,7 @@ impl UdpSocket {
     fn recv_inner(
         &self,
         inner: &UdpSocketInner,
-    ) -> impl Send + Future<Output = Result<UdpDatagram>> {
+    ) -> impl Send + Future<Output = Result<UdpDatagram>> + use<> {
         match inner.receive_state.replace(ReceiveState::None) {
             ReceiveState::None => Left(self.socket.receive().map(Self::map_content)),
             ReceiveState::Taken => unreachable!(),
