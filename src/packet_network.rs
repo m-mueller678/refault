@@ -191,6 +191,14 @@ impl<T: Packet> ConNetSocket<T> {
     }
 }
 
+impl<T: Packet> Drop for ConNetSocket<T> {
+    fn drop(&mut self) {
+        self.simulator.with(|net|{
+            net.receivers.remove(&(Addr{addr:self.}))
+        })
+    }
+}
+
 impl ConNet {
     pub fn new(send_function: SendFunction) -> Self {
         Self {
@@ -231,12 +239,5 @@ impl ConNet {
                 })
             })
             .detach();
-    }
-
-    fn with_queue<R>(&mut self, key: (Addr, TypeId), f: impl FnOnce(&Rc<Inbox>) -> R) -> R {
-        f(self
-            .receivers
-            .entry(key)
-            .or_insert_with(|| Rc::new(Inbox::new())))
     }
 }
