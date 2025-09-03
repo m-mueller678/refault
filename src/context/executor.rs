@@ -123,16 +123,15 @@ pin_project_lite::pin_project! {
     pub struct TaskHandle<T> {
         #[pin]
         result: oneshot::Receiver<T>,
-        abort: AbortHandle,
-        droppable:bool,
+        // this is always some until the handle is consumed via detach or abort.
+        abort: Option<AbortHandle>,
     }
 
     impl<T> PinnedDrop for TaskHandle<T> {
         fn drop(this: Pin<&mut Self>) {
-            assert!(
-                this.droppable || std::thread::panicking(),
-                "TaskHandle dropped. You must call either abort or detach it."
-            )
+            if let Some(abort)=&this.abort{
+                abort.abort_inner();
+            }
         }
     }
 }
@@ -157,18 +156,17 @@ impl Error for TaskAborted {}
 impl<T> TaskHandle<T> {
     /// Abort the associated task.
     pub fn abort(mut self) {
-        self.abort.abort_inner();
-        self.droppable = true;
+        self.abort.take().unwrap().abort();
     }
 
     /// Detach this handle from the task, allowing the task to keep running.
     pub fn detach(mut self) {
-        self.droppable = true;
+        self.abort.take().unwrap();
     }
 
     /// Obtain a handle that can be used to abort the associated task.
     pub fn abort_handle(&self) -> AbortHandle {
-        self.abort.clone()
+        self.abort.as_ref().unwrap().clone()
     }
 }
 
@@ -246,12 +244,11 @@ impl Executor {
         };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: AbortHandle(SimBound::wrap(task_entry.shared.clone())),
-            droppable: false,
+            abort: Some(AbortHandle(SimBound::wrap(task_entry.shared.clone()))),
         };
         self.tasks.insert(task_id, task_entry);
         self.nodes[node.0].tasks.insert(task_id);
-        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.0);
+        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.as_ref().unwrap().0);
         task_handle
     }
 
@@ -335,7 +332,7 @@ fn abort_local(
     queue: &mut ExecutorQueue,
     tasks: &mut HashMap<Id, TaskEntry>,
 ) -> Option<Pin<Box<dyn TaskDyn>>> {
-    let task_entry = tasks.get_mut(&task_id).unwrap();
+    let task_entry = tasks.get_mut(&task_id)?;
     let state = task_entry.shared.state.load(Relaxed);
     match state {
         TASK_CANCELLED | TASK_COMPLETE => None,
@@ -378,10 +375,7 @@ impl<T> Future for TaskHandle<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.result.poll(cx) {
-            Poll::Ready(x) => {
-                *this.droppable = true;
-                Poll::Ready(x.map_err(|_| TaskAborted(())))
-            }
+            Poll::Ready(x) => Poll::Ready(x.map_err(|_| TaskAborted(()))),
             Poll::Pending => Poll::Pending,
         }
     }
