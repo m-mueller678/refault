@@ -9,7 +9,7 @@ use futures::never::Never;
 use futures_intrusive::channel::LocalChannel;
 use impl_more::impl_deref_and_mut;
 use std::{
-    any::{Any, TypeId, type_name},
+    any::{Any, type_name},
     collections::{HashMap, hash_map::Entry},
     io::Error,
     pin::Pin,
@@ -17,8 +17,13 @@ use std::{
     time::Instant,
 };
 use std::{marker::PhantomData, time::Duration};
+use typeid::ConstTypeId;
 
-pub trait Packet: Any {}
+pub trait Packet: Any {
+    fn packet_type_id(&self) -> ConstTypeId {
+        ConstTypeId::of::<Self>()
+    }
+}
 impl Packet for () {}
 impl Packet for Never {}
 
@@ -45,13 +50,6 @@ impl<T> Addressed<T> {
             content: f(self.content),
         }
     }
-}
-
-/// Get the TypeId of a packet.
-///
-/// Using this prevents you from accidentally ending up with the TypeId of `Box<dyn Packet>` rather than the id of the contained value.
-pub fn packet_type_id(p: &dyn Packet) -> TypeId {
-    (*p).type_id()
 }
 
 /// The function that is invoked to send a packet.
@@ -87,7 +85,7 @@ pub struct WrappedPacket {
 
 pub struct ConNet {
     send_function: SendFunction,
-    receivers: HashMap<(Addr, TypeId), Rc<Inbox>>,
+    receivers: HashMap<(Addr, ConstTypeId), Rc<Inbox>>,
 }
 
 type Inbox = LocalChannel<Result<Addressed, Error>, [Result<Addressed, Error>; 8]>;
@@ -149,22 +147,24 @@ impl<T: Packet> ConNetSocket<T> {
             node: NodeId::current(),
         };
         let simulator = simulator::<ConNet>();
-        simulator.with(|net| match net.receivers.entry((addr, TypeId::of::<T>())) {
-            Entry::Occupied(_) => Err(AddrInUseError {
-                addr,
-                ty: type_name::<T>(),
-            }),
-            Entry::Vacant(x) => {
-                let inbox = Rc::new(Inbox::new());
-                x.insert(inbox.clone());
-                Ok(ConNetSocketUnsend {
-                    inbox,
-                    _p: PhantomData,
-                    simulator: simulator.clone(),
-                    local_addr: addr,
-                })
-            }
-        })
+        simulator.with(
+            |net| match net.receivers.entry((addr, ConstTypeId::of::<T>())) {
+                Entry::Occupied(_) => Err(AddrInUseError {
+                    addr,
+                    ty: type_name::<T>(),
+                }),
+                Entry::Vacant(x) => {
+                    let inbox = Rc::new(Inbox::new());
+                    x.insert(inbox.clone());
+                    Ok(ConNetSocketUnsend {
+                        inbox,
+                        _p: PhantomData,
+                        simulator: simulator.clone(),
+                        local_addr: addr,
+                    })
+                }
+            },
+        )
     }
 
     #[define_opaque(SocketSendFuture)]
@@ -191,10 +191,13 @@ impl<T: Packet> ConNetSocket<T> {
     }
 }
 
-impl<T: Packet> Drop for ConNetSocket<T> {
+impl<T> Drop for ConNetSocket<T> {
     fn drop(&mut self) {
-        self.simulator.with(|net|{
-            net.receivers.remove(&(Addr{addr:self.}))
+        self.simulator.with(|net| {
+            let removed = net
+                .receivers
+                .remove(&(self.local_addr, ConstTypeId::of::<T>()));
+            debug_assert!(removed.is_some_and(|x| Rc::ptr_eq(&x, &self.inbox)));
         })
     }
 }
@@ -215,16 +218,16 @@ impl ConNet {
 
     /// Cause the destination node to receive the packet at the specified time.
     pub fn enqueue_packet(at: Instant, msg: WrappedPacket) {
-        let key = (msg.dst, packet_type_id(&*msg.content));
+        let key = (msg.dst, msg.content.packet_type_id());
         Self::enqueue(at, key, Ok(msg));
     }
 
     /// Cause the destination node to receive an error at the specified time.
-    pub fn enqueue_error(at: Instant, dst: Addr, ty: TypeId, error: Error) {
+    pub fn enqueue_error(at: Instant, dst: Addr, ty: ConstTypeId, error: Error) {
         Self::enqueue(at, (dst, ty), Err(error));
     }
 
-    fn enqueue(at: Instant, key: (Addr, TypeId), msg: Result<WrappedPacket, Error>) {
+    fn enqueue(at: Instant, key: (Addr, ConstTypeId), msg: Result<WrappedPacket, Error>) {
         NodeId::INIT
             .spawn(async move {
                 sleep_until(at).await;
@@ -233,9 +236,9 @@ impl ConNet {
                     content: msg.content,
                 });
                 simulator::<ConNet>().with(|net| {
-                    net.with_queue(key, |inbox| {
+                    if let Some(inbox) = net.receivers.get(&key) {
                         inbox.try_send(addressed).ok();
-                    });
+                    }
                 })
             })
             .detach();
