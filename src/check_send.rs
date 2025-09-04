@@ -42,6 +42,18 @@ impl Constraint for SimBound {}
 #[derive(Clone)]
 pub struct CheckSend<T, C: Constraint>(Fragile<(T, C)>);
 
+impl<T> CheckSend<T, NodeBound> {
+    pub fn unwrap_check_send_node(self) -> T {
+        self.unwrap_check_send()
+    }
+}
+
+impl<T> CheckSend<T, SimBound> {
+    pub fn unwrap_check_send_sim(self) -> T {
+        self.unwrap_check_send()
+    }
+}
+
 impl<T, C: Constraint> Deref for CheckSend<T, C> {
     type Target = T;
 
@@ -81,5 +93,10 @@ impl<T, C: Constraint> CheckSend<T, C> {
 
     pub fn as_pin_ref(this: Pin<&Self>) -> Pin<&T> {
         unsafe { Pin::new_unchecked(&**this.get_ref()) }
+    }
+    fn unwrap_check_send(self) -> T {
+        let this = self.0.into_inner();
+        this.1.check();
+        this.0
     }
 }

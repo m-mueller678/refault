@@ -10,6 +10,7 @@ pub mod ip_addr;
 pub mod packet_network;
 pub mod runtime;
 pub mod simulator;
+pub mod tcp;
 pub mod udp;
 pub use context::time;
 mod check_send;

@@ -7,7 +7,6 @@ use crate::{
 };
 use futures::never::Never;
 use futures_intrusive::channel::LocalChannel;
-use impl_more::impl_deref_and_mut;
 use std::{
     any::{Any, type_name},
     collections::{HashMap, hash_map::Entry},
@@ -105,10 +104,7 @@ impl Simulator for ConNet {
     }
 }
 
-pub struct ConNetSocket<T>(CheckSend<ConNetSocketUnsend<T>, NodeBound>);
-impl_deref_and_mut!(<T> in ConNetSocket<T> => CheckSend<ConNetSocketUnsend<T>, NodeBound>);
-
-pub struct ConNetSocketUnsend<T> {
+pub struct ConNetSocket<T> {
     simulator: SimulatorHandle<ConNet>,
     inbox: Rc<Inbox>,
     local_addr: Addr,
@@ -137,39 +133,37 @@ impl From<AddrInUseError> for Error {
 }
 
 impl<T: Packet> ConNetSocket<T> {
-    pub fn open(port: Id) -> Result<Self, AddrInUseError> {
-        Ok(ConNetSocket(NodeBound::wrap(Self::open_unsend(port)?)))
-    }
-
-    fn open_unsend(port: Id) -> Result<ConNetSocketUnsend<T>, AddrInUseError> {
+    pub fn open(port: Id) -> Result<CheckSend<Self, NodeBound>, AddrInUseError> {
         let addr = Addr {
             port,
             node: NodeId::current(),
         };
-        let simulator = simulator::<ConNet>();
-        simulator.with(
-            |net| match net.receivers.entry((addr, ConstTypeId::of::<T>())) {
-                Entry::Occupied(_) => Err(AddrInUseError {
-                    addr,
-                    ty: type_name::<T>(),
-                }),
-                Entry::Vacant(x) => {
-                    let inbox = Rc::new(Inbox::new());
-                    x.insert(inbox.clone());
-                    Ok(ConNetSocketUnsend {
-                        inbox,
-                        _p: PhantomData,
-                        simulator: simulator.clone(),
-                        local_addr: addr,
-                    })
-                }
-            },
-        )
+        let simulator = simulator::<ConNet>().unwrap_check_send_sim();
+        let ret =
+            simulator.with(
+                |net| match net.receivers.entry((addr, ConstTypeId::of::<T>())) {
+                    Entry::Occupied(_) => Err(AddrInUseError {
+                        addr,
+                        ty: type_name::<T>(),
+                    }),
+                    Entry::Vacant(x) => {
+                        let inbox = Rc::new(Inbox::new());
+                        x.insert(inbox.clone());
+                        Ok(ConNetSocket {
+                            inbox,
+                            _p: PhantomData,
+                            simulator: simulator.clone(),
+                            local_addr: addr,
+                        })
+                    }
+                },
+            )?;
+        Ok(NodeBound::wrap(ret))
     }
 
     #[define_opaque(SocketSendFuture)]
     pub fn send(&self, packet: Addressed<T>) -> SocketSendFuture {
-        self.0.simulator.with(|net| {
+        self.simulator.with(|net| {
             net.send(WrappedPacket {
                 src: self.local_addr,
                 dst: packet.addr,

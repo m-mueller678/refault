@@ -81,7 +81,7 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
     }
 }
 
-pub struct SimulatorHandle<S: Simulator>(CheckSend<PhantomData<Rc<RefCell<S>>>, SimBound>);
+pub struct SimulatorHandle<S: Simulator>(PhantomData<Rc<RefCell<S>>>);
 
 impl<S: Simulator> Clone for SimulatorHandle<S> {
     fn clone(&self) -> Self {
@@ -92,13 +92,13 @@ impl<S: Simulator> Clone for SimulatorHandle<S> {
 /// Get a handle for the simulator
 ///
 /// Panics if no simulator of this type has been added.
-pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
+pub fn simulator<S: Simulator>() -> CheckSend<SimulatorHandle<S>, SimBound> {
     with_context(|cx| {
         if !cx.simulators_by_type.contains_key(&TypeId::of::<S>()) {
             panic!("simulator does not exist: {}", type_name::<S>());
         }
     });
-    SimulatorHandle(SimBound::wrap(PhantomData))
+    SimBound::wrap(SimulatorHandle(PhantomData))
 }
 
 impl<S: Simulator> SimulatorHandle<S> {
@@ -107,7 +107,6 @@ impl<S: Simulator> SimulatorHandle<S> {
     /// This acquires an exclusive lock on the simulator.
     /// Attempting to acquire another reference to the same simulator within `f` will panic.
     pub fn with<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
-        let _: PhantomData<_> = *self.0;
         with_simulator_option(|mut x| f(x.as_mut().unwrap()))
     }
 }
