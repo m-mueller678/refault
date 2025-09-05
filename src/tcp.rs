@@ -1,11 +1,11 @@
 use agnostic_net::runtime::RuntimeLite;
 use bytes::Bytes;
-use futures::{AsyncRead, FutureExt, TryFutureExt, io::AsyncWrite};
+use futures::{AsyncRead, TryFutureExt, io::AsyncWrite};
 use std::{
     cell::Cell,
     convert::identity,
-    fmt::{Debug, Display, Write},
-    future::{poll_fn, ready},
+    fmt::{Debug, Display},
+    future::poll_fn,
     io::{Error, ErrorKind},
     net::SocketAddr,
     os::fd::{AsFd, AsRawFd},
@@ -19,7 +19,7 @@ use crate::{
     ip_addr::IpAddrSimulator,
     packet_network::{
         Addr, Addressed, ConNet, ConNetSocket, Packet, SendFuture, SocketReceiveFuture,
-        SocketSendFuture, WrappedPacket,
+        WrappedPacket,
     },
     runtime::{Id, NodeId},
     simulator::{SimulatorHandle, simulator},
@@ -37,19 +37,16 @@ enum TcpDatagram {
     Data(Bytes),
 }
 
-pub struct TcpSocket {
+pub struct TcpStream {
     pub inner: CheckSend<TcpSocketUnSend, NodeBound>,
 }
 
 pub struct TcpSocketUnSend {
-    local_addr: SocketAddr,
-    ip: SimulatorHandle<IpAddrSimulator>,
-    peer_addr: SocketAddr,
     write: OwnedWriteHalfUnsend,
     read: OwnedReadHalfUnsend,
 }
 
-impl AsyncWrite for TcpSocket {
+impl AsyncWrite for TcpStream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -73,7 +70,7 @@ impl AsyncWrite for TcpSocket {
     }
 }
 
-impl futures::io::AsyncRead for TcpSocket {
+impl futures::io::AsyncRead for TcpStream {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -83,13 +80,13 @@ impl futures::io::AsyncRead for TcpSocket {
     }
 }
 
-impl AsRawFd for TcpSocket {
+impl AsRawFd for TcpStream {
     fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
         unimplemented!()
     }
 }
 
-impl AsFd for TcpSocket {
+impl AsFd for TcpStream {
     fn as_fd(&self) -> std::os::unix::prelude::BorrowedFd<'_> {
         unimplemented!()
     }
@@ -113,16 +110,16 @@ impl Debug for ReuniteError {
     }
 }
 
-impl agnostic_net::ReuniteError<TcpSocket> for ReuniteError {
+impl agnostic_net::ReuniteError<TcpStream> for ReuniteError {
     fn into_components(self) -> (OwnedReadHalf, OwnedWriteHalf) {
         (self.read, self.write)
     }
 }
 
-impl TryFrom<std::net::TcpStream> for TcpSocket {
+impl TryFrom<std::net::TcpStream> for TcpStream {
     type Error = Error;
 
-    fn try_from(value: std::net::TcpStream) -> Result<Self, Self::Error> {
+    fn try_from(_: std::net::TcpStream) -> Result<Self, Self::Error> {
         Err(ErrorKind::Unsupported.into())
     }
 }
@@ -244,7 +241,7 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         }
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         todo!()
     }
 }
@@ -263,7 +260,7 @@ impl agnostic_net::OwnedWriteHalf for OwnedWriteHalf {
     }
 }
 
-impl agnostic_net::TcpStream for TcpSocket {
+impl agnostic_net::TcpStream for TcpStream {
     type Runtime = SimRuntime;
 
     type OwnedReadHalf = OwnedReadHalf;
@@ -310,7 +307,7 @@ impl agnostic_net::TcpStream for TcpSocket {
         Ok(self.inner.write.ip_dst)
     }
 
-    fn set_ttl(&self, ttl: u32) -> std::io::Result<()> {
+    fn set_ttl(&self, _ttl: u32) -> std::io::Result<()> {
         Err(ErrorKind::Unsupported.into())
     }
 
@@ -318,7 +315,7 @@ impl agnostic_net::TcpStream for TcpSocket {
         Err(ErrorKind::Unsupported.into())
     }
 
-    fn set_nodelay(&self, nodelay: bool) -> std::io::Result<()> {
+    fn set_nodelay(&self, _nodelay: bool) -> std::io::Result<()> {
         Err(ErrorKind::Unsupported.into())
     }
 
@@ -327,7 +324,15 @@ impl agnostic_net::TcpStream for TcpSocket {
     }
 
     fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
-        todo!()
+        let this = CheckSend::unwrap_check_send_node(self.inner);
+        (
+            OwnedReadHalf {
+                inner: NodeBound::wrap(this.read),
+            },
+            OwnedWriteHalf {
+                inner: NodeBound::wrap(this.write),
+            },
+        )
     }
 
     fn reunite(
@@ -337,17 +342,29 @@ impl agnostic_net::TcpStream for TcpSocket {
     where
         Self: Sized,
     {
-        todo!()
+        if read.inner.socket.local_port() == write.inner.dst.port {
+            Ok(TcpStream {
+                inner: NodeBound::wrap(TcpSocketUnSend {
+                    write: write.inner.unwrap_check_send_node(),
+                    read: read.inner.unwrap_check_send_node(),
+                }),
+            })
+        } else {
+            Err(ReuniteError { read, write })
+        }
     }
 }
 
-impl TcpSocket {
+impl TcpStream {
     async fn connect_inner(peer_addr: SocketAddr) -> std::io::Result<Self> {
         let id = Id::new();
-        let ip = simulator::<IpAddrSimulator>().unwrap_check_send_sim();
+        let ip = simulator::<IpAddrSimulator>();
         let local_ip = ip.with(|x| x.local_ip(peer_addr.ip().is_ipv6()));
-        let local_addr = SocketAddr::new(local_ip, todo!());
-        let socket = ConNetSocket::open(id)?.unwrap_check_send_node();
+        // TODO select port to avoid collisions
+        // TODO avoid id collision on local connection
+        let port = 20_000;
+        let local_addr = SocketAddr::new(local_ip, port);
+        let socket = ConNetSocket::open(id)?;
         let dst_addr = ip.with(|x| x.lookup_socket_addr(peer_addr))?;
         socket
             .send(Addressed {
@@ -361,11 +378,8 @@ impl TcpSocket {
             .await?;
         let received = socket.receive().await?;
         debug_assert!(matches!(received.content, TcpDatagram::Accept));
-        Ok(TcpSocket {
+        Ok(TcpStream {
             inner: NodeBound::wrap(TcpSocketUnSend {
-                local_addr,
-                ip,
-                peer_addr,
                 write: OwnedWriteHalfUnsend {
                     send_future: None,
                     dst: dst_addr,
@@ -377,7 +391,7 @@ impl TcpSocket {
                     recv_buffer: Cell::new(None),
                     local_ip: local_addr,
                     peer_ip: peer_addr,
-                    socket,
+                    socket: socket.unwrap_check_send_node(),
                     receive_future: Cell::new(None),
                 },
             }),

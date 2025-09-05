@@ -161,6 +161,14 @@ impl<T: Packet> ConNetSocket<T> {
         Ok(NodeBound::wrap(ret))
     }
 
+    pub fn local_addr(&self) -> Addr {
+        self.local_addr
+    }
+
+    pub fn local_port(&self) -> Id {
+        self.local_addr.port
+    }
+
     #[define_opaque(SocketSendFuture)]
     pub fn send(&self, packet: Addressed<T>) -> SocketSendFuture {
         self.simulator.with(|net| {

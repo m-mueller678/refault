@@ -1,10 +1,14 @@
+use rand::random;
+
 use crate::{
+    check_send::{CheckSend, Constraint, NodeBound},
     packet_network::Addr,
-    runtime::{IdRange, NodeId},
-    simulator::Simulator,
+    runtime::{Id, IdRange, NodeId},
+    simulator::{Simulator, simulator},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
+    io::ErrorKind,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
@@ -20,7 +24,41 @@ pub struct IpAddrSimulator {
     gen_v4: Box<dyn FnMut() -> Ipv4Addr>,
     gen_v6: Box<dyn FnMut() -> Ipv6Addr>,
     override_next: Option<(Ipv4Addr, Ipv6Addr)>,
+    tcp_to_ip: HashMap<Id, SocketAddr>,
+    tcp_to_id: HashMap<IpAddr, HashMap<u16, Id>>,
 }
+
+pub struct TcpPortAssignment {
+    id: Id,
+}
+
+impl Drop for TcpPortAssignment {
+    fn drop(&mut self) {
+        simulator::<IpAddrSimulator>().with(|sim| {
+            let addr = sim.tcp_to_ip[&self.id];
+            if let Entry::Occupied(mut x) = sim.tcp_to_id.entry(addr.ip()) {
+                x.get_mut().remove(&addr.port());
+                if x.get().is_empty() {
+                    x.remove();
+                }
+            } else {
+                unreachable!()
+            }
+        })
+    }
+}
+
+impl TcpPortAssignment {
+    pub fn id(&self) -> Id {
+        self.id
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        simulator::<IpAddrSimulator>().with(|x| x.tcp_to_ip[&self.id])
+    }
+}
+
+impl TcpPortAssignment {}
 
 pub struct LookupError {
     addr: SocketAddr,
@@ -42,6 +80,54 @@ impl Default for IpAddrSimulator {
 }
 
 impl IpAddrSimulator {
+    /// Create an assignement for the requested address, or error if address is in use.
+    pub fn assign_tcp_fixed(
+        &mut self,
+        addr: SocketAddr,
+    ) -> Result<CheckSend<TcpPortAssignment, NodeBound>, std::io::Error> {
+        match self
+            .tcp_to_id
+            .entry(addr.ip())
+            .or_default()
+            .entry(addr.port())
+        {
+            Entry::Occupied(_) => return Err(ErrorKind::AddrInUse.into()),
+            Entry::Vacant(x) => {
+                let id = Id::new();
+                x.insert(id);
+                self.tcp_to_ip.insert(id, addr);
+                Ok(NodeBound::wrap(TcpPortAssignment { id }))
+            }
+        }
+    }
+
+    /// Create an assignment for the requested ip address with a random unused port.
+    pub fn assign_tcp_ephemeral(
+        &mut self,
+        addr: IpAddr,
+    ) -> Result<CheckSend<TcpPortAssignment, NodeBound>, std::io::Error> {
+        let ports = self.tcp_to_id.entry(addr).or_default();
+        let r: u32 = random();
+        const H: usize = 1 << 15;
+        let mut port = r as usize % H;
+        let step = (r as usize / H) | 1;
+        for _ in 0..H {
+            let port16 = (port + H) as u16;
+            if let Entry::Vacant(x) = ports.entry(port16) {
+                let id = Id::new();
+                x.insert(id);
+                self.tcp_to_ip.insert(id, SocketAddr::new(addr, port16));
+                TcpPortAssignment { id };
+            } else {
+                port = (port + step) % H;
+            }
+        }
+        // example real error: { code: 99, kind: AddrNotAvailable, message: "Cannot assign requested address" }
+        Err(std::io::Error::new(
+            ErrorKind::AddrNotAvailable,
+            "out of tcp ports",
+        ))
+    }
     // Translate an ip based socket address into a simulated network address.
     pub fn lookup_socket_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
         let node = *self.to_node.get(&addr.ip()).ok_or(LookupError { addr })?;
@@ -91,6 +177,8 @@ impl IpAddrSimulator {
             gen_v4,
             gen_v6,
             override_next: None,
+            tcp_to_ip: HashMap::new(),
+            tcp_to_id: HashMap::new(),
         }
     }
 
