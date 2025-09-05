@@ -21,9 +21,9 @@ use std::{
     task::{Context, Poll},
 };
 
-pub struct UdpSocket(CheckSend<UdpSocketUnSend, NodeBound>);
+pub struct UdpSocket(pub CheckSend<UdpSocketUnSend, NodeBound>);
 
-struct UdpSocketUnSend {
+pub struct UdpSocketUnSend {
     peer_addr: Cell<Option<SocketAddr>>,
     receive_state: Cell<ReceiveState>,
     socket: ConNetSocket<UdpDatagram>,
