@@ -169,8 +169,12 @@ impl<T: Packet> ConNetSocket<T> {
         self.local_addr.port
     }
 
-    #[define_opaque(SocketSendFuture)]
     pub fn send(&self, packet: Addressed<T>) -> SocketSendFuture {
+        self.send_any(packet)
+    }
+
+    #[define_opaque(SocketSendFuture)]
+    pub fn send_any<U: Packet>(&self, packet: Addressed<U>) -> SocketSendFuture {
         self.simulator.with(|net| {
             net.send(WrappedPacket {
                 src: self.local_addr,

@@ -1,10 +1,14 @@
+use agnostic_net::ToSocketAddrs;
+use futures_intrusive::channel::{GenericChannel, LocalChannel};
 use rand::random;
 
 use crate::{
+    agnostic_lite_runtime::SimRuntime,
     check_send::{CheckSend, Constraint, NodeBound},
-    packet_network::Addr,
-    runtime::{Id, IdRange, NodeId},
+    packet_network::{Addr, Addressed, ConNetSocket},
+    runtime::{Id, IdRange, NodeId, spawn},
     simulator::{Simulator, simulator},
+    tcp::{TcpDatagram, TcpIncomingConnection},
 };
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -17,15 +21,20 @@ use std::{
 /// Each node except for the initial node has exactly one ip-v4 and one ip-v6 address.
 /// The initial node has no address.
 pub struct IpAddrSimulator {
-    v4_ports: IdRange,
-    v6_ports: IdRange,
     to_node: HashMap<IpAddr, NodeId>,
     to_ip: HashMap<NodeId, (Ipv4Addr, Ipv6Addr)>,
     gen_v4: Box<dyn FnMut() -> Ipv4Addr>,
     gen_v6: Box<dyn FnMut() -> Ipv6Addr>,
     override_next: Option<(Ipv4Addr, Ipv6Addr)>,
+
+    udp_v4_ports: IdRange,
+    udp_v6_ports: IdRange,
+
     tcp_to_ip: HashMap<Id, SocketAddr>,
     tcp_to_id: HashMap<IpAddr, HashMap<u16, Id>>,
+    tcp_listeners:
+        HashMap<SocketAddr, LocalChannel<TcpIncomingConnection, [TcpIncomingConnection; 32]>>,
+    tcp_listener_port: Id,
 }
 
 pub struct TcpPortAssignment {
@@ -42,7 +51,7 @@ impl Drop for TcpPortAssignment {
                     x.remove();
                 }
             } else {
-                unreachable!()
+                panic!()
             }
         })
     }
@@ -58,7 +67,7 @@ impl TcpPortAssignment {
     }
 }
 
-impl TcpPortAssignment {}
+pub struct TcpListenHandle(TcpPortAssignment);
 
 pub struct LookupError {
     addr: SocketAddr,
@@ -128,14 +137,29 @@ impl IpAddrSimulator {
             "out of tcp ports",
         ))
     }
-    // Translate an ip based socket address into a simulated network address.
-    pub fn lookup_socket_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
+
+    pub fn listen_tcp(&mut self, assignment: TcpPortAssignment) -> TcpListenHandle {
+        let addr = self.tcp_to_ip[&assignment.id];
+        match self.tcp_listeners.entry(addr) {
+            Entry::Occupied(_) => panic!(),
+            Entry::Vacant(x) => {
+                x.insert(GenericChannel::new());
+                TcpListenHandle(assignment)
+            }
+        }
+    }
+
+    pub fn lookup_socket_addr_udp(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
         let node = *self.to_node.get(&addr.ip()).ok_or(LookupError { addr })?;
         let port = match addr.ip() {
-            IpAddr::V4(_) => self.v4_ports.get(addr.port() as usize),
-            IpAddr::V6(_) => self.v6_ports.get(addr.port() as usize),
+            IpAddr::V4(_) => self.udp_v4_ports.get(addr.port() as usize),
+            IpAddr::V6(_) => self.udp_v6_ports.get(addr.port() as usize),
         };
         Ok(Addr { node, port })
+    }
+
+    pub fn tcp_listener_port(&self) -> Id {
+        self.tcp_listener_port
     }
 
     pub fn get_ip_for_node(&self, node: NodeId, v6: bool) -> IpAddr {
@@ -170,15 +194,17 @@ impl IpAddrSimulator {
     /// the provided callbacks are used to generate addresses for new nodes.
     pub fn new(gen_v4: Box<dyn FnMut() -> Ipv4Addr>, gen_v6: Box<dyn FnMut() -> Ipv6Addr>) -> Self {
         IpAddrSimulator {
-            v4_ports: IdRange::new(1 << 16),
-            v6_ports: IdRange::new(1 << 16),
             to_node: HashMap::default(),
             to_ip: HashMap::default(),
             gen_v4,
             gen_v6,
             override_next: None,
+            udp_v4_ports: IdRange::new(1 << 16),
+            udp_v6_ports: IdRange::new(1 << 16),
             tcp_to_ip: HashMap::new(),
             tcp_to_id: HashMap::new(),
+            tcp_listeners: HashMap::new(),
+            tcp_listener_port: Id::new(),
         }
     }
 
@@ -222,5 +248,59 @@ impl Simulator for IpAddrSimulator {
         insert(IpAddr::V4(ips.0));
         insert(IpAddr::V6(ips.1));
         assert!(self.to_ip.insert(node, ips).is_none());
+        self.start_node();
     }
+
+    fn start_node(&mut self) {
+        let socket = ConNetSocket::<TcpDatagram>::open(self.tcp_listener_port)
+            .ok()
+            .unwrap();
+        spawn(async move {
+            let simulator = simulator::<IpAddrSimulator>();
+            loop {
+                if let Ok(incoming) = socket.receive().await {
+                    match incoming.content {
+                        TcpDatagram::Connect { client, server } => {
+                            let found_listener = simulator.with(|sim| {
+                                if let Some(channel) = sim.tcp_listeners.get(&server) {
+                                    channel
+                                        .try_send(TcpIncomingConnection {
+                                            client_ip: client,
+                                            client_sim: incoming.addr,
+                                        })
+                                        .ok();
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                            if !found_listener {
+                                socket
+                                    .send(Addressed {
+                                        addr: incoming.addr,
+                                        content: TcpDatagram::Refused,
+                                    })
+                                    .await
+                                    .ok();
+                            }
+                        }
+                        TcpDatagram::Refused | TcpDatagram::Accept | TcpDatagram::Data(_) => {
+                            panic!()
+                        }
+                    }
+                } else {
+                    todo!()
+                }
+            }
+        })
+        .detach();
+    }
+}
+
+pub(crate) async fn resolve_socket_addrs(
+    addr: impl ToSocketAddrs<SimRuntime>,
+) -> std::io::Result<SocketAddr> {
+    addr.to_socket_addrs().await?.next().ok_or_else(|| {
+        std::io::Error::new(ErrorKind::InvalidInput, "could not resolve to any address")
+    })
 }
