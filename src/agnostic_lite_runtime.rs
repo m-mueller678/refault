@@ -1,21 +1,22 @@
-use std::{
-    future::ready,
-    pin::Pin,
-    time::{Duration, Instant},
-};
-
-use agnostic_lite::{
-    AfterHandle, AsyncAfterSpawner, AsyncBlockingSpawner, AsyncLocalSpawner, AsyncSpawner,
-    JoinHandle, LocalJoinHandle, RuntimeLite, Yielder,
-    time::{AsyncLocalInterval, AsyncLocalSleep, AsyncLocalTimeout, AsyncTimeout, Delay, Elapsed},
-};
-use futures::{FutureExt, Stream};
+mod timeout;
 
 use crate::{
     context::{executor::TaskAborted, with_context},
     runtime::{TaskHandle, spawn},
     time::{Sleep, sleep, sleep_until},
 };
+use agnostic_lite::{
+    AfterHandle, AsyncAfterSpawner, AsyncBlockingSpawner, AsyncLocalSpawner, AsyncSpawner,
+    JoinHandle, LocalJoinHandle, RuntimeLite, Yielder,
+    time::{AsyncLocalInterval, AsyncLocalSleep, AsyncLocalTimeout, AsyncTimeout, Delay},
+};
+use futures::{FutureExt, Stream};
+use std::{
+    future::ready,
+    pin::Pin,
+    time::{Duration, Instant},
+};
+use timeout::Timeout;
 
 #[derive(Clone, Copy)]
 pub struct SimRuntime;
@@ -123,28 +124,28 @@ impl RuntimeLite for SimRuntime {
     where
         F: Future + Send,
     {
-        Self::timeout_local(duration, future)
+        Self::Timeout::timeout(duration, future)
     }
 
     fn timeout_at<F>(deadline: Self::Instant, future: F) -> Self::Timeout<F>
     where
         F: Future + Send,
     {
-        Self::timeout_local_at(deadline, future)
+        Self::Timeout::timeout_at(deadline, future)
     }
 
-    fn timeout_local<F>(_duration: core::time::Duration, _future: F) -> Self::LocalTimeout<F>
+    fn timeout_local<F>(duration: core::time::Duration, future: F) -> Self::LocalTimeout<F>
     where
         F: Future,
     {
-        todo!()
+        Self::LocalTimeout::timeout_local(duration, future)
     }
 
-    fn timeout_local_at<F>(_deadline: Self::Instant, _future: F) -> Self::LocalTimeout<F>
+    fn timeout_local_at<F>(deadline: Self::Instant, future: F) -> Self::LocalTimeout<F>
     where
         F: Future,
     {
-        todo!()
+        Self::LocalTimeout::timeout_local_at(deadline, future)
     }
 }
 
@@ -304,19 +305,6 @@ impl AsyncLocalSleep for Sleep {
 
     fn reset(mut self: Pin<&mut Self>, deadline: Self::Instant) {
         self.set(sleep_until(deadline))
-    }
-}
-
-pub struct Timeout<F>(F);
-
-impl<F: Future> Future for Timeout<F> {
-    type Output = Result<F::Output, Elapsed>;
-
-    fn poll(
-        self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        todo!()
     }
 }
 
