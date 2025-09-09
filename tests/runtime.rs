@@ -4,9 +4,9 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
-use deterministic_simulation_core::runtime::{NodeId, TaskHandle, spawn};
-use deterministic_simulation_core::simulator::{Simulator, add_simulator, simulator};
-use deterministic_simulation_core::{
+use refault::runtime::{NodeId, TaskHandle, spawn};
+use refault::simulator::{Simulator, add_simulator, simulator};
+use refault::{
     runtime::{Id, Runtime},
     time::sleep,
 };

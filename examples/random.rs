@@ -1,5 +1,5 @@
-use deterministic_simulation_core::runtime::Runtime;
 use rand::Rng;
+use refault::runtime::Runtime;
 
 fn main() {
     let runtime = Runtime::default().with_seed(42);

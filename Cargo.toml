@@ -1,15 +1,11 @@
 [package]
-name = "deterministic_simulation_core"
+name = "refault"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = ["tarpc"]
-tarpc = ["dep:tarpc"]
-
 [dependencies]
 libc = "1.0.0-alpha.1"
-rand = { version = "0.9", default-features = false }
+rand = { version = "0.9" }
 rand_chacha = "0.9"
 futures = "0.3.31"
 pin-project-lite = "0.2.16"
@@ -18,11 +14,11 @@ priority-queue = "2.0.0"
 pin-arc = "0.2.1"
 cooked-waker = "5"
 either = "1.15"
-tarpc = { version = "0.37", optional = true, default-features = false }
 scopeguard = "1.2"
 smallvec = "1"
 bytes = "1"
 agnostic-net = "0.2.3"
+agnostic-lite="0.5.6"
 fragile = "2.0.1"
 futures-intrusive = "0.5"
 impl-more="0.3.1"

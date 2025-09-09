@@ -1,44 +1,46 @@
 //! # Deviations
 //! - When a TcpListener is dropped, the connections created from it remain open and prevent a new listener from being created. Linux closes all connections.
 
+use super::{IpAddrSimulator, Result};
 use crate::{
     agnostic_lite_runtime::SimRuntime,
     check_send::{CheckSend, Constraint, NodeBound},
-    ip_addr::{IpAddrSimulator, TcpListenHandle, TcpPortAssignment, resolve_socket_addrs},
+    ip::resolve_socket_addrs,
     packet_network::{
         Addr, Addressed, ConNet, ConNetSocket, Packet, SendFuture, SocketReceiveFuture,
         WrappedPacket,
     },
-    runtime::{Id, NodeId},
+    runtime::{Id, NodeId, spawn},
     simulator::{SimulatorHandle, simulator},
 };
 use agnostic_net::runtime::RuntimeLite;
 use bytes::Bytes;
 use either::Either;
-use futures::{AsyncRead, TryFutureExt, io::AsyncWrite};
+use futures::{AsyncRead, FutureExt, TryFutureExt, io::AsyncWrite};
+use futures_intrusive::channel::{GenericChannel, LocalChannel};
+use rand::random;
 use std::{
     cell::Cell,
+    collections::{HashMap, hash_map::Entry},
     convert::identity,
     fmt::{Debug, Display},
     future::poll_fn,
     io::{Error, ErrorKind},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     os::fd::{AsFd, AsRawFd},
     pin::Pin,
     rc::Rc,
     task::{Context, Poll, ready},
 };
 
-type Result<T, E = Error> = std::result::Result<T, E>;
-
 impl Packet for TcpDatagram {}
 
-pub struct TcpIncomingConnection {
-    pub(crate) client_ip: SocketAddr,
-    pub(crate) client_sim: Addr,
+struct TcpIncomingConnection {
+    client_ip: SocketAddr,
+    client_sim: Addr,
 }
 
-pub(super) enum TcpDatagram {
+enum TcpDatagram {
     Connect {
         client: SocketAddr,
         server: SocketAddr,
@@ -48,9 +50,7 @@ pub(super) enum TcpDatagram {
     Data(Bytes),
 }
 
-pub struct TcpStream {
-    pub inner: CheckSend<TcpStreamUnSend, NodeBound>,
-}
+pub struct TcpStream(pub CheckSend<TcpStreamUnSend, NodeBound>);
 
 pub struct TcpStreamUnSend {
     write: OwnedWriteHalfUnsend,
@@ -62,22 +62,16 @@ impl AsyncWrite for TcpStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.inner.write).poll_write(cx, buf)
+    ) -> Poll<Result<usize>> {
+        Pin::new(&mut self.0.write).poll_write(cx, buf)
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.inner.write).poll_flush(cx)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        Pin::new(&mut self.0.write).poll_flush(cx)
     }
 
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.inner.write).poll_close(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        Pin::new(&mut self.0.write).poll_close(cx)
     }
 }
 
@@ -86,8 +80,8 @@ impl futures::io::AsyncRead for TcpStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.inner.read).poll_read(cx, buf)
+    ) -> Poll<Result<usize>> {
+        Pin::new(&mut self.0.read).poll_read(cx, buf)
     }
 }
 
@@ -144,17 +138,15 @@ pub struct OwnedReadHalfUnsend {
     _port_assignment: Either<Rc<TcpPortAssignment>, Rc<TcpListenHandle>>,
 }
 
-pub struct OwnedReadHalf {
-    pub inner: CheckSend<OwnedReadHalfUnsend, NodeBound>,
-}
+pub struct OwnedReadHalf(pub CheckSend<OwnedReadHalfUnsend, NodeBound>);
 
 impl futures::io::AsyncRead for OwnedReadHalf {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut *self.inner).poll_read(cx, buf)
+    ) -> Poll<Result<usize>> {
+        Pin::new(&mut *self.0).poll_read(cx, buf)
     }
 }
 
@@ -163,7 +155,7 @@ impl AsyncRead for OwnedReadHalfUnsend {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> Poll<Result<usize>> {
         let received = ready!(self.poll_recv_to_buffer(cx))?;
         Poll::Ready(Ok(self.copy_from_recv_buffer(received, buf, true)))
     }
@@ -172,16 +164,16 @@ impl AsyncRead for OwnedReadHalfUnsend {
 impl agnostic_net::OwnedReadHalf for OwnedReadHalf {
     type Runtime = SimRuntime;
 
-    fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.inner.local_addr)
+    fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.0.local_addr)
     }
 
-    fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.inner.peer_addr)
+    fn peer_addr(&self) -> Result<SocketAddr> {
+        Ok(self.0.peer_addr)
     }
 
-    fn peek(&mut self, buf: &mut [u8]) -> impl Future<Output = std::io::Result<usize>> + Send {
-        poll_fn(|cx| self.inner.poll_peek(buf, cx))
+    fn peek(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<usize>> + Send {
+        poll_fn(|cx| self.0.poll_peek(buf, cx))
     }
 }
 
@@ -194,31 +186,23 @@ pub struct OwnedWriteHalfUnsend {
     net: SimulatorHandle<ConNet>,
 }
 
-pub struct OwnedWriteHalf {
-    pub inner: CheckSend<OwnedWriteHalfUnsend, NodeBound>,
-}
+pub struct OwnedWriteHalf(pub CheckSend<OwnedWriteHalfUnsend, NodeBound>);
 
 impl AsyncWrite for OwnedWriteHalf {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        Pin::new(&mut *self.inner).poll_write(cx, buf)
+    ) -> Poll<Result<usize>> {
+        Pin::new(&mut *self.0).poll_write(cx, buf)
     }
 
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut *self.inner).poll_flush(cx)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        Pin::new(&mut *self.0).poll_flush(cx)
     }
 
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut *self.inner).poll_flush(cx)
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        Pin::new(&mut *self.0).poll_flush(cx)
     }
 }
 
@@ -227,7 +211,7 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> Poll<Result<usize>> {
         ready!(self.as_mut().poll_flush(cx))?;
         let this = &mut *self;
         this.send_future = Some(Box::pin(this.net.with(|net| {
@@ -244,7 +228,7 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         Poll::Ready(Ok(buf.len()))
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         if let Some(x) = &mut self.send_future {
             let result = ready!(x.as_mut().poll(cx));
             self.send_future = None;
@@ -254,7 +238,7 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         }
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
         todo!()
     }
 }
@@ -264,12 +248,12 @@ impl agnostic_net::OwnedWriteHalf for OwnedWriteHalf {
 
     fn forget(self) {}
 
-    fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.inner.local_addr)
+    fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.0.local_addr)
     }
 
-    fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.inner.peer_addr)
+    fn peer_addr(&self) -> Result<SocketAddr> {
+        Ok(self.0.peer_addr)
     }
 }
 
@@ -282,9 +266,7 @@ impl agnostic_net::TcpStream for TcpStream {
 
     type ReuniteError = ReuniteError;
 
-    async fn connect<A: agnostic_net::ToSocketAddrs<Self::Runtime>>(
-        peer_addr: A,
-    ) -> std::io::Result<Self>
+    async fn connect<A: agnostic_net::ToSocketAddrs<Self::Runtime>>(peer_addr: A) -> Result<Self>
     where
         Self: Sized,
     {
@@ -294,7 +276,7 @@ impl agnostic_net::TcpStream for TcpStream {
     fn connect_timeout(
         addr: &SocketAddr,
         timeout: std::time::Duration,
-    ) -> impl Future<Output = std::io::Result<Self>> + Send
+    ) -> impl Future<Output = Result<Self>> + Send
     where
         Self: Sized,
     {
@@ -303,42 +285,38 @@ impl agnostic_net::TcpStream for TcpStream {
     }
 
     fn peek(&self, buf: &mut [u8]) -> impl Future<Output = Result<usize>> + Send {
-        poll_fn(|cx| self.inner.read.poll_peek(buf, cx))
+        poll_fn(|cx| self.0.read.poll_peek(buf, cx))
     }
 
-    fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.inner.write.local_addr)
+    fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.0.write.local_addr)
     }
 
-    fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        Ok(self.inner.write.peer_addr)
+    fn peer_addr(&self) -> Result<SocketAddr> {
+        Ok(self.0.write.peer_addr)
     }
 
-    fn set_ttl(&self, _ttl: u32) -> std::io::Result<()> {
+    fn set_ttl(&self, _ttl: u32) -> Result<()> {
         Err(ErrorKind::Unsupported.into())
     }
 
-    fn ttl(&self) -> std::io::Result<u32> {
+    fn ttl(&self) -> Result<u32> {
         Err(ErrorKind::Unsupported.into())
     }
 
-    fn set_nodelay(&self, _nodelay: bool) -> std::io::Result<()> {
+    fn set_nodelay(&self, _nodelay: bool) -> Result<()> {
         Err(ErrorKind::Unsupported.into())
     }
 
-    fn nodelay(&self) -> std::io::Result<bool> {
+    fn nodelay(&self) -> Result<bool> {
         Err(ErrorKind::Unsupported.into())
     }
 
     fn into_split(self) -> (Self::OwnedReadHalf, Self::OwnedWriteHalf) {
-        let this = CheckSend::unwrap_check_send_node(self.inner);
+        let this = CheckSend::unwrap_check_send_node(self.0);
         (
-            OwnedReadHalf {
-                inner: NodeBound::wrap(this.read),
-            },
-            OwnedWriteHalf {
-                inner: NodeBound::wrap(this.write),
-            },
+            OwnedReadHalf(NodeBound::wrap(this.read)),
+            OwnedWriteHalf(NodeBound::wrap(this.write)),
         )
     }
 
@@ -349,13 +327,11 @@ impl agnostic_net::TcpStream for TcpStream {
     where
         Self: Sized,
     {
-        if read.inner.socket.local_port() == write.inner.peer_sim.port {
-            Ok(TcpStream {
-                inner: NodeBound::wrap(TcpStreamUnSend {
-                    write: write.inner.unwrap_check_send_node(),
-                    read: read.inner.unwrap_check_send_node(),
-                }),
-            })
+        if read.0.socket.local_port() == write.0.peer_sim.port {
+            Ok(TcpStream(NodeBound::wrap(TcpStreamUnSend {
+                write: write.0.unwrap_check_send_node(),
+                read: read.0.unwrap_check_send_node(),
+            })))
         } else {
             Err(ReuniteError { read, write })
         }
@@ -363,7 +339,7 @@ impl agnostic_net::TcpStream for TcpStream {
 }
 
 impl TcpStream {
-    async fn connect_inner(peer_addr: SocketAddr) -> std::io::Result<Self> {
+    async fn connect_inner(peer_addr: SocketAddr) -> Result<Self> {
         let id = Id::new();
         let ip = simulator::<IpAddrSimulator>();
         let port_assignment = ip.with(|x| {
@@ -390,26 +366,24 @@ impl TcpStream {
         debug_assert!(matches!(received.content, TcpDatagram::Accept));
         let local_addr = port_assignment.addr();
         let port_assignment = Either::Left(Rc::new(port_assignment));
-        Ok(TcpStream {
-            inner: NodeBound::wrap(TcpStreamUnSend {
-                write: OwnedWriteHalfUnsend {
-                    _port_assignment: port_assignment.clone(),
-                    local_addr,
-                    send_future: None,
-                    peer_sim,
-                    peer_addr,
-                    net: simulator().unwrap_check_send_sim(),
-                },
-                read: OwnedReadHalfUnsend {
-                    local_addr,
-                    recv_buffer: Cell::new(None),
-                    _port_assignment: port_assignment,
-                    peer_addr,
-                    socket: socket.unwrap_check_send_node(),
-                    receive_future: Cell::new(None),
-                },
-            }),
-        })
+        Ok(TcpStream(NodeBound::wrap(TcpStreamUnSend {
+            write: OwnedWriteHalfUnsend {
+                _port_assignment: port_assignment.clone(),
+                local_addr,
+                send_future: None,
+                peer_sim,
+                peer_addr,
+                net: simulator().unwrap_check_send_sim(),
+            },
+            read: OwnedReadHalfUnsend {
+                local_addr,
+                recv_buffer: Cell::new(None),
+                _port_assignment: port_assignment,
+                peer_addr,
+                socket: socket.unwrap_check_send_node(),
+                receive_future: Cell::new(None),
+            },
+        })))
     }
 }
 
@@ -451,7 +425,7 @@ impl OwnedReadHalfUnsend {
         len
     }
 
-    fn poll_peek(&self, buf: &mut [u8], cx: &mut Context) -> Poll<std::io::Result<usize>> {
+    fn poll_peek(&self, buf: &mut [u8], cx: &mut Context) -> Poll<Result<usize>> {
         let received = ready!(self.poll_recv_to_buffer(cx))?;
         Poll::Ready(Ok(self.copy_from_recv_buffer(received, buf, false)))
     }
@@ -492,26 +466,24 @@ impl agnostic_net::TcpListener for TcpListener {
             .await?;
         let this = &*self.0;
         Ok((
-            TcpStream {
-                inner: NodeBound::wrap(TcpStreamUnSend {
-                    write: OwnedWriteHalfUnsend {
-                        local_addr: this.local_addr,
-                        send_future: None,
-                        peer_sim: incoming.client_sim,
-                        peer_addr: incoming.client_ip,
-                        _port_assignment: Either::Right(this.listener_handle.clone()),
-                        net: self.0.net.clone(),
-                    },
-                    read: OwnedReadHalfUnsend {
-                        recv_buffer: Cell::new(None),
-                        receive_future: Cell::new(None),
-                        socket: socket.unwrap_check_send_node(),
-                        local_addr: this.local_addr,
-                        peer_addr: incoming.client_ip,
-                        _port_assignment: Either::Right(this.listener_handle.clone()),
-                    },
-                }),
-            },
+            TcpStream(NodeBound::wrap(TcpStreamUnSend {
+                write: OwnedWriteHalfUnsend {
+                    local_addr: this.local_addr,
+                    send_future: None,
+                    peer_sim: incoming.client_sim,
+                    peer_addr: incoming.client_ip,
+                    _port_assignment: Either::Right(this.listener_handle.clone()),
+                    net: self.0.net.clone(),
+                },
+                read: OwnedReadHalfUnsend {
+                    recv_buffer: Cell::new(None),
+                    receive_future: Cell::new(None),
+                    socket: socket.unwrap_check_send_node(),
+                    local_addr: this.local_addr,
+                    peer_addr: incoming.client_ip,
+                    _port_assignment: Either::Right(this.listener_handle.clone()),
+                },
+            })),
             incoming.client_ip,
         ))
     }
@@ -523,24 +495,22 @@ impl agnostic_net::TcpListener for TcpListener {
         }))
     }
 
-    fn into_incoming(
-        self,
-    ) -> impl futures::stream::Stream<Item = std::io::Result<Self::Stream>> + Send {
+    fn into_incoming(self) -> impl futures::stream::Stream<Item = Result<Self::Stream>> + Send {
         futures::stream::unfold(self, |this| async move {
             let con = this.accept().await.map(|x| x.0);
             Some((con, this))
         })
     }
 
-    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.0.local_addr)
     }
 
-    fn set_ttl(&self, _ttl: u32) -> std::io::Result<()> {
+    fn set_ttl(&self, _ttl: u32) -> Result<()> {
         Err(ErrorKind::Unsupported.into())
     }
 
-    fn ttl(&self) -> std::io::Result<u32> {
+    fn ttl(&self) -> Result<u32> {
         Err(ErrorKind::Unsupported.into())
     }
 }
@@ -579,4 +549,170 @@ impl TcpListener {
             })))
         })
     }
+}
+
+struct TcpPortAssignment {
+    id: Id,
+}
+
+impl Drop for TcpPortAssignment {
+    fn drop(&mut self) {
+        simulator::<IpAddrSimulator>().with(|sim| {
+            let addr = sim.tcp.tcp_to_ip[&self.id];
+            if let Entry::Occupied(mut x) = sim.tcp.tcp_to_id.entry(addr.ip()) {
+                x.get_mut().remove(&addr.port());
+                if x.get().is_empty() {
+                    x.remove();
+                }
+            } else {
+                panic!()
+            }
+        })
+    }
+}
+
+impl TcpPortAssignment {
+    fn addr(&self) -> SocketAddr {
+        simulator::<IpAddrSimulator>().with(|x| x.tcp.tcp_to_ip[&self.id])
+    }
+}
+
+struct TcpListenHandle {
+    port_assignment: TcpPortAssignment,
+    channel: Rc<TcpIncomingChannel>,
+}
+
+impl Drop for TcpListenHandle {
+    fn drop(&mut self) {
+        simulator::<IpAddrSimulator>().with(|sim| {
+            let addr = sim.tcp.tcp_to_ip[&self.port_assignment.id];
+            let removed = sim.tcp.tcp_listeners.remove(&addr);
+            debug_assert!(Rc::ptr_eq(&self.channel, &removed.unwrap()))
+        })
+    }
+}
+
+impl TcpListenHandle {
+    fn accept(&self) -> impl Future<Output = TcpIncomingConnection> {
+        self.channel.receive().map(Option::unwrap)
+    }
+}
+
+impl IpAddrSimulator {
+    fn tcp_listener_port(&self) -> Id {
+        self.tcp.tcp_listener_port
+    }
+
+    /// Create an assignement for the requested address, or error if address is in use.
+    fn assign_tcp_fixed(&mut self, addr: SocketAddr) -> Result<TcpPortAssignment, std::io::Error> {
+        match self
+            .tcp
+            .tcp_to_id
+            .entry(addr.ip())
+            .or_default()
+            .entry(addr.port())
+        {
+            Entry::Occupied(_) => return Err(ErrorKind::AddrInUse.into()),
+            Entry::Vacant(x) => {
+                let id = Id::new();
+                x.insert(id);
+                self.tcp.tcp_to_ip.insert(id, addr);
+                Ok(TcpPortAssignment { id })
+            }
+        }
+    }
+
+    /// Create an assignment for the requested ip address with a random unused port.
+    fn assign_tcp_ephemeral(&mut self, addr: IpAddr) -> Result<TcpPortAssignment, std::io::Error> {
+        let ports = self.tcp.tcp_to_id.entry(addr).or_default();
+        let r: u32 = random();
+        const H: usize = 1 << 15;
+        let mut port = r as usize % H;
+        let step = (r as usize / H) | 1;
+        for _ in 0..H {
+            let port16 = (port + H) as u16;
+            if let Entry::Vacant(x) = ports.entry(port16) {
+                let id = Id::new();
+                x.insert(id);
+                self.tcp.tcp_to_ip.insert(id, SocketAddr::new(addr, port16));
+                TcpPortAssignment { id };
+            } else {
+                port = (port + step) % H;
+            }
+        }
+        // example real error: { code: 99, kind: AddrNotAvailable, message: "Cannot assign requested address" }
+        Err(std::io::Error::new(
+            ErrorKind::AddrNotAvailable,
+            "out of tcp ports",
+        ))
+    }
+
+    fn listen_tcp(&mut self, assignment: TcpPortAssignment) -> TcpListenHandle {
+        let addr = self.tcp.tcp_to_ip[&assignment.id];
+        match self.tcp.tcp_listeners.entry(addr) {
+            Entry::Occupied(_) => panic!(),
+            Entry::Vacant(x) => {
+                let channel = Rc::new(GenericChannel::new());
+                x.insert(channel.clone());
+                TcpListenHandle {
+                    port_assignment: assignment,
+                    channel,
+                }
+            }
+        }
+    }
+
+    pub(super) fn start_tcp_dispatcher(&mut self) {
+        let socket = ConNetSocket::<TcpDatagram>::open(self.tcp.tcp_listener_port)
+            .ok()
+            .unwrap();
+        spawn(async move {
+            let simulator = simulator::<IpAddrSimulator>();
+            loop {
+                if let Ok(incoming) = socket.receive().await {
+                    match incoming.content {
+                        TcpDatagram::Connect { client, server } => {
+                            let connected = simulator.with(|sim| {
+                                if let Some(channel) = sim.tcp.tcp_listeners.get(&server) {
+                                    channel
+                                        .try_send(TcpIncomingConnection {
+                                            client_ip: client,
+                                            client_sim: incoming.addr,
+                                        })
+                                        .is_ok()
+                                } else {
+                                    false
+                                }
+                            });
+                            if !connected {
+                                socket
+                                    .send(Addressed {
+                                        addr: incoming.addr,
+                                        content: TcpDatagram::Refused,
+                                    })
+                                    .await
+                                    .ok();
+                            }
+                        }
+                        TcpDatagram::Refused | TcpDatagram::Accept | TcpDatagram::Data(_) => {
+                            panic!()
+                        }
+                    }
+                } else {
+                    todo!()
+                }
+            }
+        })
+        .detach();
+    }
+}
+
+type TcpIncomingChannel = LocalChannel<TcpIncomingConnection, [TcpIncomingConnection; 16]>;
+
+#[derive(Default)]
+pub(super) struct TcpSim {
+    tcp_to_ip: HashMap<Id, SocketAddr>,
+    tcp_to_id: HashMap<IpAddr, HashMap<u16, Id>>,
+    tcp_listeners: HashMap<SocketAddr, Rc<TcpIncomingChannel>>,
+    tcp_listener_port: Id,
 }

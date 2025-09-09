@@ -1,4 +1,4 @@
-use deterministic_simulation_core::{
+use refault::{
     runtime::{Runtime, spawn},
     time::sleep,
 };

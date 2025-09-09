@@ -3,11 +3,18 @@ use std::ops::RangeInclusive;
 use super::Context2;
 
 /// A unique Id within a simulation.
+///
+/// The `Default` implementation returns a new id.
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
 pub struct Id(u64);
 
+impl Default for Id {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Id {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Context2::with(|cx| {
             let id = cx.pre_next_global_id.get() + 1;

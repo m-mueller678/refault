@@ -1,4 +1,4 @@
-use deterministic_simulation_core::{runtime::Runtime, time::sleep};
+use refault::{runtime::Runtime, time::sleep};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() {

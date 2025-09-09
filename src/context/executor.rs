@@ -391,7 +391,7 @@ pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
 pub struct NodeId(pub(crate) usize);
 
 impl NodeId {
-    pub(crate) const INIT: Self = NodeId(0);
+    pub const INIT: Self = NodeId(0);
 
     /// Create a new node that tasks can be run on.
     ///

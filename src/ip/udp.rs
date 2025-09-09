@@ -1,9 +1,9 @@
+use super::{IpAddrSimulator, LookupError, Result};
 use crate::{
     agnostic_lite_runtime::SimRuntime,
     check_send::{CheckSend, Constraint, NodeBound},
-    ip_addr::IpAddrSimulator,
-    packet_network::{Addressed, ConNetSocket, Packet, SocketReceiveFuture},
-    runtime::NodeId,
+    packet_network::{Addr, Addressed, ConNetSocket, Packet, SocketReceiveFuture},
+    runtime::{Id, IdRange, NodeId},
     simulator::{SimulatorHandle, simulator},
 };
 use agnostic_net::ToSocketAddrs;
@@ -13,7 +13,7 @@ use futures::FutureExt;
 use std::{
     cell::Cell,
     future::{poll_fn, ready},
-    io::{Error, ErrorKind, Result},
+    io::{Error, ErrorKind},
     net::SocketAddr,
     os::fd::{AsFd, AsRawFd},
     pin::Pin,
@@ -62,7 +62,7 @@ impl TryFrom<std::net::UdpSocket> for UdpSocket {
     type Error = Error;
 
     fn try_from(_value: std::net::UdpSocket) -> std::result::Result<Self, Self::Error> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 }
 
@@ -186,7 +186,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
         _multiaddr: std::net::Ipv4Addr,
         _interface: std::net::Ipv4Addr,
     ) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn join_multicast_v6(
@@ -194,7 +194,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
         _multiaddr: &std::net::Ipv6Addr,
         _interface: u32,
     ) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn leave_multicast_v4(
@@ -202,7 +202,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
         _multiaddr: std::net::Ipv4Addr,
         _interface: std::net::Ipv4Addr,
     ) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn leave_multicast_v6(
@@ -210,35 +210,35 @@ impl agnostic_net::UdpSocket for UdpSocket {
         _multiaddr: &std::net::Ipv6Addr,
         _interface: u32,
     ) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn multicast_loop_v4(&self) -> std::io::Result<bool> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn set_multicast_loop_v4(&self, _on: bool) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn multicast_ttl_v4(&self) -> std::io::Result<u32> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn set_multicast_ttl_v4(&self, _ttl: u32) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn multicast_loop_v6(&self) -> std::io::Result<bool> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn set_multicast_loop_v6(&self, _on: bool) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn set_ttl(&self, _ttl: u32) -> std::io::Result<()> {
-        Err(unsupported())
+        Err(ErrorKind::Unsupported.into())
     }
 
     fn ttl(&self) -> std::io::Result<u32> {
@@ -247,7 +247,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
 
     fn set_broadcast(&self, broadcast: bool) -> std::io::Result<()> {
         if broadcast {
-            Err(unsupported())
+            Err(ErrorKind::Unsupported.into())
         } else {
             Ok(())
         }
@@ -275,7 +275,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
         _buf: &[u8],
         _target: SocketAddr,
     ) -> std::task::Poll<std::io::Result<usize>> {
-        Poll::Ready(Err(unsupported()))
+        Poll::Ready(Err(ErrorKind::Unsupported.into()))
     }
 }
 
@@ -389,6 +389,33 @@ async fn resolve_addr(addr: impl ToSocketAddrs<SimRuntime>) -> Result<SocketAddr
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "could not resolve to any address"))
 }
 
-fn unsupported() -> Error {
-    ErrorKind::Unsupported.into()
+impl IpAddrSimulator {
+    fn udp_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
+        Ok(Addr {
+            node: self.ip_to_node(addr.ip())?,
+            port: self.udp_port(addr.port(), addr.ip().is_ipv6()),
+        })
+    }
+
+    fn udp_port(&self, port: u16, is_v6: bool) -> Id {
+        if is_v6 {
+            self.udp.v4_ports.get(port as usize)
+        } else {
+            self.udp.v6_ports.get(port as usize)
+        }
+    }
+}
+
+pub(super) struct UdpSim {
+    v4_ports: IdRange,
+    v6_ports: IdRange,
+}
+
+impl Default for UdpSim {
+    fn default() -> Self {
+        Self {
+            v4_ports: IdRange::new(1 << 16),
+            v6_ports: IdRange::new(1 << 16),
+        }
+    }
 }

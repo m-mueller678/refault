@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use agnostic_net::runtime::{
+use agnostic_lite::{
     AfterHandle, AsyncAfterSpawner, AsyncBlockingSpawner, AsyncLocalSpawner, AsyncSpawner,
     JoinHandle, LocalJoinHandle, RuntimeLite, Yielder,
     time::{AsyncLocalInterval, AsyncLocalSleep, AsyncLocalTimeout, AsyncTimeout, Delay, Elapsed},
@@ -325,7 +325,7 @@ impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
 
     fn timeout_local(_timeout: Duration, _fut: F) -> Self
     where
-        Self: Sized + Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>>,
+        Self: Sized + Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>>,
         F: Future,
     {
         todo!()
@@ -333,7 +333,7 @@ impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
 
     fn timeout_local_at(_deadline: Self::Instant, _fut: F) -> Self
     where
-        Self: Sized + Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>>,
+        Self: Sized + Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>>,
         F: Future,
     {
         todo!()
@@ -346,8 +346,7 @@ impl<F: Future + Send> AsyncTimeout<F> for Timeout<F> {
     fn timeout(_timeout: Duration, _fut: F) -> Self
     where
         F: Future + Send,
-        Self:
-            Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>> + Send + Sized,
+        Self: Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>> + Send + Sized,
     {
         todo!()
     }
@@ -355,8 +354,7 @@ impl<F: Future + Send> AsyncTimeout<F> for Timeout<F> {
     fn timeout_at(_deadline: Self::Instant, _fut: F) -> Self
     where
         F: Future + Send,
-        Self:
-            Future<Output = Result<F::Output, agnostic_net::runtime::time::Elapsed>> + Send + Sized,
+        Self: Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>> + Send + Sized,
     {
         todo!()
     }

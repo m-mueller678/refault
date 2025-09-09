@@ -1,11 +1,11 @@
 use agnostic_net::UdpSocket as _;
-use deterministic_simulation_core::{
-    ip_addr::IpAddrSimulator,
+use refault::{
+    ip::IpAddrSimulator,
+    ip::udp::UdpSocket,
     packet_network::{ConNet, perfect_connectivity},
     runtime::{NodeId, Runtime},
     simulator::{add_simulator, simulator},
     time::sleep,
-    udp::UdpSocket,
 };
 use std::{
     io::ErrorKind,
