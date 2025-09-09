@@ -539,6 +539,7 @@ impl TcpListener {
     fn new_inner(addr: SocketAddr) -> Result<Self> {
         let ip = simulator::<IpAddrSimulator>();
         ip.with(|ip| {
+            let addr = SocketAddr::new(ip.map_bind_addr(addr.ip())?, addr.port());
             let port_assignment = ip.assign_tcp_fixed(addr)?;
             let listener_handle = Rc::new(ip.listen_tcp(port_assignment));
             Ok(TcpListener(NodeBound::wrap(TcpListenerUnsend {

@@ -5,7 +5,7 @@ use crate::{agnostic_lite_runtime::SimRuntime, runtime::NodeId, simulator::Simul
 use agnostic_net::ToSocketAddrs;
 use std::{
     collections::HashMap,
-    io::ErrorKind,
+    io::{Error, ErrorKind},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 use tcp::TcpSim;
@@ -121,6 +121,11 @@ impl IpAddrSimulator {
         let local = self.local_ip(a.is_ipv6());
         if a.is_unspecified() {
             Ok(local)
+        } else if a.is_loopback() || a.is_multicast() {
+            Err(Error::new(
+                ErrorKind::InvalidData,
+                "unsupported special ip address",
+            ))
         } else if a == local {
             Ok(a)
         } else {

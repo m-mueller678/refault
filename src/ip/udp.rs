@@ -277,18 +277,17 @@ impl agnostic_net::UdpSocket for UdpSocket {
 
 impl UdpSocket {
     fn bind_addr(local_addr: SocketAddr) -> Result<Self> {
-        let (ip, port) = simulator::<IpAddrSimulator>().with(|sim| {
+        simulator::<IpAddrSimulator>().with(|sim| {
             let ip = sim.map_bind_addr(local_addr.ip())?;
             let port = sim.udp_port(local_addr.port(), ip.is_ipv6());
-            std::io::Result::Ok((ip, port))
-        })?;
-        Ok(UdpSocket(NodeBound::wrap(UdpSocketUnSend {
-            socket: ConNetSocket::open(port)?.unwrap_check_send_node(),
-            local_addr: SocketAddr::new(ip, local_addr.port()),
-            ip: simulator().unwrap_check_send_sim(),
-            peer_addr: Cell::new(None),
-            receive_state: Cell::new(ReceiveState::None),
-        })))
+            Ok(UdpSocket(NodeBound::wrap(UdpSocketUnSend {
+                socket: ConNetSocket::open(port)?.unwrap_check_send_node(),
+                local_addr: SocketAddr::new(ip, local_addr.port()),
+                ip: simulator().unwrap_check_send_sim(),
+                peer_addr: Cell::new(None),
+                receive_state: Cell::new(ReceiveState::None),
+            })))
+        })
     }
 }
 
