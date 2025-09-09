@@ -1,4 +1,5 @@
 use agnostic_net::ToSocketAddrs;
+use futures::FutureExt;
 use futures_intrusive::channel::{GenericChannel, LocalChannel};
 use rand::random;
 
@@ -14,7 +15,10 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     io::ErrorKind,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    rc::Rc,
 };
+
+type TcpIncomingChannel = LocalChannel<TcpIncomingConnection, [TcpIncomingConnection; 32]>;
 
 /// Assign Ip-addresses to nodes.
 ///
@@ -32,8 +36,7 @@ pub struct IpAddrSimulator {
 
     tcp_to_ip: HashMap<Id, SocketAddr>,
     tcp_to_id: HashMap<IpAddr, HashMap<u16, Id>>,
-    tcp_listeners:
-        HashMap<SocketAddr, LocalChannel<TcpIncomingConnection, [TcpIncomingConnection; 32]>>,
+    tcp_listeners: HashMap<SocketAddr, Rc<TcpIncomingChannel>>,
     tcp_listener_port: Id,
 }
 
@@ -67,10 +70,29 @@ impl TcpPortAssignment {
     }
 }
 
-pub struct TcpListenHandle(TcpPortAssignment);
+pub struct TcpListenHandle {
+    port_assignment: TcpPortAssignment,
+    channel: Rc<TcpIncomingChannel>,
+}
+
+impl Drop for TcpListenHandle {
+    fn drop(&mut self) {
+        simulator::<IpAddrSimulator>().with(|sim| {
+            let addr = sim.tcp_to_ip[&self.port_assignment.id];
+            let removed = sim.tcp_listeners.remove(&addr);
+            debug_assert!(Rc::ptr_eq(&self.channel, &removed.unwrap()))
+        })
+    }
+}
+
+impl TcpListenHandle {
+    pub fn accept(&self) -> impl Future<Output = TcpIncomingConnection> {
+        self.channel.receive().map(Option::unwrap)
+    }
+}
 
 pub struct LookupError {
-    addr: SocketAddr,
+    addr: IpAddr,
 }
 
 impl From<LookupError> for std::io::Error {
@@ -93,7 +115,7 @@ impl IpAddrSimulator {
     pub fn assign_tcp_fixed(
         &mut self,
         addr: SocketAddr,
-    ) -> Result<CheckSend<TcpPortAssignment, NodeBound>, std::io::Error> {
+    ) -> Result<TcpPortAssignment, std::io::Error> {
         match self
             .tcp_to_id
             .entry(addr.ip())
@@ -105,7 +127,7 @@ impl IpAddrSimulator {
                 let id = Id::new();
                 x.insert(id);
                 self.tcp_to_ip.insert(id, addr);
-                Ok(NodeBound::wrap(TcpPortAssignment { id }))
+                Ok(TcpPortAssignment { id })
             }
         }
     }
@@ -114,7 +136,7 @@ impl IpAddrSimulator {
     pub fn assign_tcp_ephemeral(
         &mut self,
         addr: IpAddr,
-    ) -> Result<CheckSend<TcpPortAssignment, NodeBound>, std::io::Error> {
+    ) -> Result<TcpPortAssignment, std::io::Error> {
         let ports = self.tcp_to_id.entry(addr).or_default();
         let r: u32 = random();
         const H: usize = 1 << 15;
@@ -143,26 +165,40 @@ impl IpAddrSimulator {
         match self.tcp_listeners.entry(addr) {
             Entry::Occupied(_) => panic!(),
             Entry::Vacant(x) => {
-                x.insert(GenericChannel::new());
-                TcpListenHandle(assignment)
+                let channel = Rc::new(GenericChannel::new());
+                x.insert(channel.clone());
+                TcpListenHandle {
+                    port_assignment: assignment,
+                    channel,
+                }
             }
         }
     }
 
-    pub fn lookup_socket_addr_udp(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
-        let node = *self.to_node.get(&addr.ip()).ok_or(LookupError { addr })?;
-        let port = match addr.ip() {
-            IpAddr::V4(_) => self.udp_v4_ports.get(addr.port() as usize),
-            IpAddr::V6(_) => self.udp_v6_ports.get(addr.port() as usize),
-        };
-        Ok(Addr { node, port })
+    pub fn ip_to_node(&self, addr: IpAddr) -> Result<NodeId, LookupError> {
+        self.to_node.get(&addr).copied().ok_or(LookupError { addr })
+    }
+
+    pub fn udp_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
+        Ok(Addr {
+            node: self.ip_to_node(addr.ip())?,
+            port: self.udp_port(addr.port(), addr.ip().is_ipv6()),
+        })
+    }
+
+    pub fn udp_port(&self, port: u16, is_v6: bool) -> Id {
+        if is_v6 {
+            self.udp_v4_ports.get(port as usize)
+        } else {
+            self.udp_v6_ports.get(port as usize)
+        }
     }
 
     pub fn tcp_listener_port(&self) -> Id {
         self.tcp_listener_port
     }
 
-    pub fn get_ip_for_node(&self, node: NodeId, v6: bool) -> IpAddr {
+    pub fn node_to_ip(&self, node: NodeId, v6: bool) -> IpAddr {
         if node == NodeId::INIT {
             panic!("init node is not assigned an ip address");
         }
@@ -175,7 +211,7 @@ impl IpAddrSimulator {
     }
 
     pub fn local_ip(&self, v6: bool) -> IpAddr {
-        self.get_ip_for_node(NodeId::current(), v6)
+        self.node_to_ip(NodeId::current(), v6)
     }
 
     /// Override the address given to the next node created.

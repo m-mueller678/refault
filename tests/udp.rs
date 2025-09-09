@@ -14,7 +14,7 @@ use std::{
 };
 
 fn get_ip(n: NodeId) -> IpAddr {
-    simulator::<IpAddrSimulator>().with(|s| s.get_ip_for_node(n, false))
+    simulator::<IpAddrSimulator>().with(|s| s.node_to_ip(n, false))
 }
 
 async fn receiver(from: Option<NodeId>) -> Instant {
