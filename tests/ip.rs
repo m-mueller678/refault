@@ -94,7 +94,7 @@ fn tcp_send() {
         }
         async fn check_tcp_connection(mut tcp: TcpStream, write_num: i32) {
             SimRuntime::timeout(Duration::from_secs(3), async move {
-                tcp.write(msg(write_num).as_bytes()).await.unwrap();
+                tcp.write_all(msg(write_num).as_bytes()).await.unwrap();
                 let mut buf = [0; 64];
                 let read_len = tcp.read(&mut buf).await.unwrap();
                 assert_eq!(
@@ -111,11 +111,7 @@ fn tcp_send() {
                 .await
                 .unwrap();
             for i in port as i32.. {
-                spawn(check_tcp_connection(
-                    listener.accept().await.unwrap().0,
-                    i as i32,
-                ))
-                .detach();
+                spawn(check_tcp_connection(listener.accept().await.unwrap().0, i)).detach();
             }
         }
         let nodes = setup_net(5);

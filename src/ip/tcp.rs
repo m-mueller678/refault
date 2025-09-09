@@ -557,8 +557,7 @@ struct TcpPortAssignment {
 impl Drop for TcpPortAssignment {
     fn drop(&mut self) {
         simulator::<IpAddrSimulator>().with(|sim| {
-            let addr = sim.tcp.to_ip[&self.id];
-            //TODO remove from to_ip
+            let addr = sim.tcp.to_ip.remove(&self.id).unwrap();
             if let Entry::Occupied(mut x) = sim.tcp.to_id.entry(addr.ip()) {
                 x.get_mut().remove(&addr.port());
                 if x.get().is_empty() {
@@ -606,7 +605,7 @@ impl IpAddrSimulator {
             .or_default()
             .entry(addr.port())
         {
-            Entry::Occupied(_) => return Err(ErrorKind::AddrInUse.into()),
+            Entry::Occupied(_) => Err(ErrorKind::AddrInUse.into()),
             Entry::Vacant(x) => {
                 let id = Id::new();
                 x.insert(id);

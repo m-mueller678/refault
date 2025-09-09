@@ -85,7 +85,7 @@ pub struct SimulatorHandle<S: Simulator>(PhantomData<Rc<RefCell<S>>>);
 
 impl<S: Simulator> Clone for SimulatorHandle<S> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(self.0)
     }
 }
 
