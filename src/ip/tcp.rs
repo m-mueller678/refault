@@ -631,8 +631,9 @@ impl IpAddrSimulator {
             if let Entry::Vacant(x) = ports.entry(port16) {
                 let id = Id::new();
                 x.insert(id);
-                self.tcp.to_ip.insert(id, SocketAddr::new(addr, port16));
-                TcpPortAssignment { id };
+                let socket_addr = SocketAddr::new(addr, port16);
+                self.tcp.to_ip.insert(id, socket_addr);
+                return Ok((TcpPortAssignment { id }, socket_addr));
             } else {
                 port = (port + step) % H;
             }
