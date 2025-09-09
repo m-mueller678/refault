@@ -107,7 +107,7 @@ fn tcp_send() {
             .unwrap();
         }
         async fn server(port: u16) {
-            let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 22))
+            let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
                 .await
                 .unwrap();
             for i in port as i32.. {
