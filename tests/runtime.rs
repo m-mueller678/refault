@@ -90,8 +90,7 @@ fn kill_node() {
                 sleep(Duration::from_millis(10)).await;
                 rc2.set(1);
                 sleep(Duration::from_millis(10)).await;
-            })
-            .detach();
+            });
             node
         };
         let n1 = spawn_on_new_node();

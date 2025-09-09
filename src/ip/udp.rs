@@ -1,9 +1,10 @@
-use super::{IpAddrSimulator, LookupError, Result};
+use super::{IpAddrSimulator, Result};
 use crate::{
     agnostic_lite_runtime::SimRuntime,
     check_send::{CheckSend, Constraint, NodeBound},
+    ip::resolve_socket_addrs,
     packet_network::{Addr, Addressed, ConNetSocket, Packet, SocketReceiveFuture},
-    runtime::{Id, IdRange, NodeId},
+    runtime::{Id, IdRange},
     simulator::{SimulatorHandle, simulator},
 };
 use agnostic_net::ToSocketAddrs;
@@ -85,13 +86,8 @@ impl agnostic_net::UdpSocket for UdpSocket {
     }
 
     async fn connect<A: ToSocketAddrs<Self::Runtime>>(&self, addr: A) -> Result<()> {
-        let Some(addr) = addr.to_socket_addrs().await?.next() else {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "could not resolve to any address",
-            ));
-        };
-        self.0.peer_addr.set(Some(addr));
+        let peer_addr = resolve_socket_addrs(addr).await?;
+        self.0.peer_addr.set(Some(peer_addr));
         Ok(())
     }
 
@@ -141,7 +137,7 @@ impl agnostic_net::UdpSocket for UdpSocket {
         buf: &[u8],
         target: A,
     ) -> std::io::Result<usize> {
-        let dst = resolve_addr(target).await?;
+        let dst = resolve_socket_addrs(target).await?;
         self.send_inner(buf, dst)?.await
     }
 
@@ -281,24 +277,11 @@ impl agnostic_net::UdpSocket for UdpSocket {
 
 impl UdpSocket {
     fn bind_addr(local_addr: SocketAddr) -> Result<Self> {
-        let mut ip = local_addr.ip();
-        let port = if ip.is_loopback() || ip.is_multicast() {
-            unimplemented!();
-        } else {
-            let addr = simulator::<IpAddrSimulator>().with(|x| {
-                if ip.is_unspecified() {
-                    ip = x.local_ip(ip.is_ipv6());
-                }
-                x.udp_addr(SocketAddr::new(ip, local_addr.port()))
-            })?;
-            if addr.node != NodeId::current() {
-                return Err(Error::new(
-                    ErrorKind::AddrNotAvailable,
-                    "specified ip address does not belong to this node",
-                ));
-            }
-            addr.port
-        };
+        let (ip, port) = simulator::<IpAddrSimulator>().with(|sim| {
+            let ip = sim.map_bind_addr(local_addr.ip())?;
+            let port = sim.udp_port(local_addr.port(), ip.is_ipv6());
+            std::io::Result::Ok((ip, port))
+        })?;
         Ok(UdpSocket(NodeBound::wrap(UdpSocketUnSend {
             socket: ConNetSocket::open(port)?.unwrap_check_send_node(),
             local_addr: SocketAddr::new(ip, local_addr.port()),
@@ -322,7 +305,12 @@ impl UdpSocket {
                 src: self.0.local_addr,
                 dst,
             };
-            let addr = self.0.ip.with(|ip| ip.udp_addr(packet.dst))?;
+            let addr = self.0.ip.with(|sim| {
+                std::io::Result::Ok(Addr {
+                    node: sim.ip_to_node(packet.dst.ip())?,
+                    port: sim.udp_port(packet.dst.port(), packet.dst.ip().is_ipv6()),
+                })
+            })?;
             self.0.socket.send(Addressed {
                 addr,
                 content: packet,
@@ -382,21 +370,7 @@ impl UdpSocketUnSend {
     }
 }
 
-async fn resolve_addr(addr: impl ToSocketAddrs<SimRuntime>) -> Result<SocketAddr> {
-    addr.to_socket_addrs()
-        .await?
-        .next()
-        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "could not resolve to any address"))
-}
-
 impl IpAddrSimulator {
-    fn udp_addr(&self, addr: SocketAddr) -> Result<Addr, LookupError> {
-        Ok(Addr {
-            node: self.ip_to_node(addr.ip())?,
-            port: self.udp_port(addr.port(), addr.ip().is_ipv6()),
-        })
-    }
-
     fn udp_port(&self, port: u16, is_v6: bool) -> Id {
         if is_v6 {
             self.udp.v4_ports.get(port as usize)

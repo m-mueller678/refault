@@ -1,5 +1,6 @@
 //! # Deviations
 //! - When a TcpListener is dropped, the connections created from it remain open and prevent a new listener from being created. Linux closes all connections.
+//! - Tcp connections do not time out
 
 use super::{IpAddrSimulator, Result};
 use crate::{
@@ -342,7 +343,7 @@ impl TcpStream {
     async fn connect_inner(peer_addr: SocketAddr) -> Result<Self> {
         let id = Id::new();
         let ip = simulator::<IpAddrSimulator>();
-        let port_assignment = ip.with(|x| {
+        let (port_assignment, local_addr) = ip.with(|x| {
             let ip = x.local_ip(peer_addr.ip().is_ipv6());
             x.assign_tcp_ephemeral(ip)
         })?;
@@ -357,14 +358,13 @@ impl TcpStream {
             .send(Addressed {
                 addr: peer_sim,
                 content: TcpDatagram::Connect {
-                    client: port_assignment.addr(),
+                    client: local_addr,
                     server: peer_addr,
                 },
             })
             .await?;
         let received = socket.receive().await?;
         debug_assert!(matches!(received.content, TcpDatagram::Accept));
-        let local_addr = port_assignment.addr();
         let port_assignment = Either::Left(Rc::new(port_assignment));
         Ok(TcpStream(NodeBound::wrap(TcpStreamUnSend {
             write: OwnedWriteHalfUnsend {
@@ -540,10 +540,9 @@ impl TcpListener {
         let ip = simulator::<IpAddrSimulator>();
         ip.with(|ip| {
             let port_assignment = ip.assign_tcp_fixed(addr)?;
-            let local_addr = port_assignment.addr();
             let listener_handle = Rc::new(ip.listen_tcp(port_assignment));
             Ok(TcpListener(NodeBound::wrap(TcpListenerUnsend {
-                local_addr,
+                local_addr: addr,
                 listener_handle,
                 net: simulator().unwrap_check_send_sim(),
             })))
@@ -558,8 +557,9 @@ struct TcpPortAssignment {
 impl Drop for TcpPortAssignment {
     fn drop(&mut self) {
         simulator::<IpAddrSimulator>().with(|sim| {
-            let addr = sim.tcp.tcp_to_ip[&self.id];
-            if let Entry::Occupied(mut x) = sim.tcp.tcp_to_id.entry(addr.ip()) {
+            let addr = sim.tcp.to_ip[&self.id];
+            //TODO remove from to_ip
+            if let Entry::Occupied(mut x) = sim.tcp.to_id.entry(addr.ip()) {
                 x.get_mut().remove(&addr.port());
                 if x.get().is_empty() {
                     x.remove();
@@ -571,12 +571,6 @@ impl Drop for TcpPortAssignment {
     }
 }
 
-impl TcpPortAssignment {
-    fn addr(&self) -> SocketAddr {
-        simulator::<IpAddrSimulator>().with(|x| x.tcp.tcp_to_ip[&self.id])
-    }
-}
-
 struct TcpListenHandle {
     port_assignment: TcpPortAssignment,
     channel: Rc<TcpIncomingChannel>,
@@ -585,8 +579,8 @@ struct TcpListenHandle {
 impl Drop for TcpListenHandle {
     fn drop(&mut self) {
         simulator::<IpAddrSimulator>().with(|sim| {
-            let addr = sim.tcp.tcp_to_ip[&self.port_assignment.id];
-            let removed = sim.tcp.tcp_listeners.remove(&addr);
+            let addr = sim.tcp.to_ip[&self.port_assignment.id];
+            let removed = sim.tcp.listeners.remove(&addr);
             debug_assert!(Rc::ptr_eq(&self.channel, &removed.unwrap()))
         })
     }
@@ -600,14 +594,14 @@ impl TcpListenHandle {
 
 impl IpAddrSimulator {
     fn tcp_listener_port(&self) -> Id {
-        self.tcp.tcp_listener_port
+        self.tcp.listener_port
     }
 
     /// Create an assignement for the requested address, or error if address is in use.
     fn assign_tcp_fixed(&mut self, addr: SocketAddr) -> Result<TcpPortAssignment, std::io::Error> {
         match self
             .tcp
-            .tcp_to_id
+            .to_id
             .entry(addr.ip())
             .or_default()
             .entry(addr.port())
@@ -616,15 +610,18 @@ impl IpAddrSimulator {
             Entry::Vacant(x) => {
                 let id = Id::new();
                 x.insert(id);
-                self.tcp.tcp_to_ip.insert(id, addr);
+                self.tcp.to_ip.insert(id, addr);
                 Ok(TcpPortAssignment { id })
             }
         }
     }
 
     /// Create an assignment for the requested ip address with a random unused port.
-    fn assign_tcp_ephemeral(&mut self, addr: IpAddr) -> Result<TcpPortAssignment, std::io::Error> {
-        let ports = self.tcp.tcp_to_id.entry(addr).or_default();
+    fn assign_tcp_ephemeral(
+        &mut self,
+        addr: IpAddr,
+    ) -> Result<(TcpPortAssignment, SocketAddr), std::io::Error> {
+        let ports = self.tcp.to_id.entry(addr).or_default();
         let r: u32 = random();
         const H: usize = 1 << 15;
         let mut port = r as usize % H;
@@ -634,7 +631,7 @@ impl IpAddrSimulator {
             if let Entry::Vacant(x) = ports.entry(port16) {
                 let id = Id::new();
                 x.insert(id);
-                self.tcp.tcp_to_ip.insert(id, SocketAddr::new(addr, port16));
+                self.tcp.to_ip.insert(id, SocketAddr::new(addr, port16));
                 TcpPortAssignment { id };
             } else {
                 port = (port + step) % H;
@@ -648,8 +645,8 @@ impl IpAddrSimulator {
     }
 
     fn listen_tcp(&mut self, assignment: TcpPortAssignment) -> TcpListenHandle {
-        let addr = self.tcp.tcp_to_ip[&assignment.id];
-        match self.tcp.tcp_listeners.entry(addr) {
+        let addr = self.tcp.to_ip[&assignment.id];
+        match self.tcp.listeners.entry(addr) {
             Entry::Occupied(_) => panic!(),
             Entry::Vacant(x) => {
                 let channel = Rc::new(GenericChannel::new());
@@ -663,7 +660,7 @@ impl IpAddrSimulator {
     }
 
     pub(super) fn start_tcp_dispatcher(&mut self) {
-        let socket = ConNetSocket::<TcpDatagram>::open(self.tcp.tcp_listener_port)
+        let socket = ConNetSocket::<TcpDatagram>::open(self.tcp.listener_port)
             .ok()
             .unwrap();
         spawn(async move {
@@ -673,7 +670,7 @@ impl IpAddrSimulator {
                     match incoming.content {
                         TcpDatagram::Connect { client, server } => {
                             let connected = simulator.with(|sim| {
-                                if let Some(channel) = sim.tcp.tcp_listeners.get(&server) {
+                                if let Some(channel) = sim.tcp.listeners.get(&server) {
                                     channel
                                         .try_send(TcpIncomingConnection {
                                             client_ip: client,
@@ -711,8 +708,8 @@ type TcpIncomingChannel = LocalChannel<TcpIncomingConnection, [TcpIncomingConnec
 
 #[derive(Default)]
 pub(super) struct TcpSim {
-    tcp_to_ip: HashMap<Id, SocketAddr>,
-    tcp_to_id: HashMap<IpAddr, HashMap<u16, Id>>,
-    tcp_listeners: HashMap<SocketAddr, Rc<TcpIncomingChannel>>,
-    tcp_listener_port: Id,
+    to_ip: HashMap<Id, SocketAddr>,
+    to_id: HashMap<IpAddr, HashMap<u16, Id>>,
+    listeners: HashMap<SocketAddr, Rc<TcpIncomingChannel>>,
+    listener_port: Id,
 }

@@ -116,6 +116,17 @@ impl IpAddrSimulator {
             Ipv6Addr::from_bits((counter as u128) << 64)
         })
     }
+
+    fn map_bind_addr(&self, a: IpAddr) -> Result<IpAddr> {
+        let local = self.local_ip(a.is_ipv6());
+        if a.is_unspecified() {
+            Ok(local)
+        } else if a == local {
+            Ok(a)
+        } else {
+            Err(ErrorKind::AddrNotAvailable.into())
+        }
+    }
 }
 
 impl Simulator for IpAddrSimulator {

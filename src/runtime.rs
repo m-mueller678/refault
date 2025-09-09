@@ -52,7 +52,7 @@ impl Runtime {
     pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
         self.run_simulation(
             Box::new(|| {
-                NodeId::INIT.spawn(f()).detach();
+                NodeId::INIT.spawn(f());
             }),
             Box::new(NoopEventHandler),
         );
@@ -72,7 +72,7 @@ impl Runtime {
         let mut run_with_events = |events| {
             self.run_simulation(
                 Box::new(|| {
-                    NodeId::INIT.spawn(f()).detach();
+                    NodeId::INIT.spawn(f());
                 }),
                 events,
             )

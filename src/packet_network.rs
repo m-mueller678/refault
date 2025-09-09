@@ -234,19 +234,17 @@ impl ConNet {
     }
 
     fn enqueue(at: Instant, key: (Addr, ConstTypeId), msg: Result<WrappedPacket, Error>) {
-        NodeId::INIT
-            .spawn(async move {
-                sleep_until(at).await;
-                let addressed = msg.map(|msg| Addressed {
-                    addr: msg.src,
-                    content: msg.content,
-                });
-                simulator::<ConNet>().with(|net| {
-                    if let Some(inbox) = net.receivers.get(&key) {
-                        inbox.try_send(addressed).ok();
-                    }
-                })
+        NodeId::INIT.spawn(async move {
+            sleep_until(at).await;
+            let addressed = msg.map(|msg| Addressed {
+                addr: msg.src,
+                content: msg.content,
+            });
+            simulator::<ConNet>().with(|net| {
+                if let Some(inbox) = net.receivers.get(&key) {
+                    inbox.try_send(addressed).ok();
+                }
             })
-            .detach();
+        });
     }
 }

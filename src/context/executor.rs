@@ -383,7 +383,7 @@ impl<T> Future for TaskHandle<T> {
 
 /// Spawn a task on the current node.
 pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
-    NodeId::current().spawn(future)
+    NodeId::current().spawn_with_handle(future)
 }
 
 /// A unique identifier for a node within a simulation.
@@ -420,14 +420,17 @@ impl NodeId {
         })
     }
 
-    /// Spawn a task on this node.
-    ///
-    /// Can only be called from within a simulation.
-    pub fn spawn<F: Future + 'static>(self, future: F) -> TaskHandle<F::Output> {
+    /// Spawn a task on this node and return the handle.
+    pub fn spawn_with_handle<F: Future + 'static>(self, future: F) -> TaskHandle<F::Output> {
         with_context(|cx| {
             cx.event_handler.handle_event(Event::TaskSpawned);
             cx.executor.spawn(self, future)
         })
+    }
+
+    /// Spawn a task on this node and detach it.
+    pub fn spawn<F: Future + 'static>(self, future: F) {
+        self.spawn_with_handle(future).detach();
     }
 
     /// Returns the id of the node this task is running on.
