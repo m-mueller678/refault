@@ -5,7 +5,6 @@ use rand::random;
 
 use crate::{
     agnostic_lite_runtime::SimRuntime,
-    check_send::{CheckSend, Constraint, NodeBound},
     packet_network::{Addr, Addressed, ConNetSocket},
     runtime::{Id, IdRange, NodeId, spawn},
     simulator::{Simulator, simulator},

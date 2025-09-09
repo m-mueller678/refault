@@ -1,3 +1,6 @@
+//! # Deviations
+//! - When a TcpListener is dropped, the connections created from it remain open and prevent a new listener from being created. Linux closes all connections.
+
 use crate::{
     agnostic_lite_runtime::SimRuntime,
     check_send::{CheckSend, Constraint, NodeBound},
@@ -11,6 +14,7 @@ use crate::{
 };
 use agnostic_net::runtime::RuntimeLite;
 use bytes::Bytes;
+use either::Either;
 use futures::{AsyncRead, TryFutureExt, io::AsyncWrite};
 use std::{
     cell::Cell,
@@ -137,7 +141,7 @@ pub struct OwnedReadHalfUnsend {
     socket: ConNetSocket<TcpDatagram>,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
-    _port_assignment: Option<Rc<TcpPortAssignment>>,
+    _port_assignment: Either<Rc<TcpPortAssignment>, Rc<TcpListenHandle>>,
 }
 
 pub struct OwnedReadHalf {
@@ -186,7 +190,7 @@ pub struct OwnedWriteHalfUnsend {
     peer_sim: Addr,
     peer_addr: SocketAddr,
     local_addr: SocketAddr,
-    _port_assignment: Option<Rc<TcpPortAssignment>>,
+    _port_assignment: Either<Rc<TcpPortAssignment>, Rc<TcpListenHandle>>,
     net: SimulatorHandle<ConNet>,
 }
 
@@ -385,7 +389,7 @@ impl TcpStream {
         let received = socket.receive().await?;
         debug_assert!(matches!(received.content, TcpDatagram::Accept));
         let local_addr = port_assignment.addr();
-        let port_assignment = Some(Rc::new(port_assignment));
+        let port_assignment = Either::Left(Rc::new(port_assignment));
         Ok(TcpStream {
             inner: NodeBound::wrap(TcpStreamUnSend {
                 write: OwnedWriteHalfUnsend {
@@ -454,7 +458,7 @@ impl OwnedReadHalfUnsend {
 }
 
 pub struct TcpListenerUnsend {
-    listener_handle: TcpListenHandle,
+    listener_handle: Rc<TcpListenHandle>,
     net: SimulatorHandle<ConNet>,
     local_addr: SocketAddr,
 }
@@ -495,7 +499,7 @@ impl agnostic_net::TcpListener for TcpListener {
                         send_future: None,
                         peer_sim: incoming.client_sim,
                         peer_addr: incoming.client_ip,
-                        _port_assignment: None,
+                        _port_assignment: Either::Right(this.listener_handle.clone()),
                         net: self.0.net.clone(),
                     },
                     read: OwnedReadHalfUnsend {
@@ -504,7 +508,7 @@ impl agnostic_net::TcpListener for TcpListener {
                         socket: socket.unwrap_check_send_node(),
                         local_addr: this.local_addr,
                         peer_addr: incoming.client_ip,
-                        _port_assignment: None,
+                        _port_assignment: Either::Right(this.listener_handle.clone()),
                     },
                 }),
             },
@@ -567,7 +571,7 @@ impl TcpListener {
         ip.with(|ip| {
             let port_assignment = ip.assign_tcp_fixed(addr)?;
             let local_addr = port_assignment.addr();
-            let listener_handle = ip.listen_tcp(port_assignment);
+            let listener_handle = Rc::new(ip.listen_tcp(port_assignment));
             Ok(TcpListener(NodeBound::wrap(TcpListenerUnsend {
                 local_addr,
                 listener_handle,

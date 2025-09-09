@@ -289,7 +289,7 @@ impl UdpSocket {
                 if ip.is_unspecified() {
                     ip = x.local_ip(ip.is_ipv6());
                 }
-                x.lookup_socket_addr_udp(SocketAddr::new(ip, local_addr.port()))
+                x.udp_addr(SocketAddr::new(ip, local_addr.port()))
             })?;
             if addr.node != NodeId::current() {
                 return Err(Error::new(
@@ -322,7 +322,7 @@ impl UdpSocket {
                 src: self.0.local_addr,
                 dst,
             };
-            let addr = self.0.ip.with(|ip| ip.lookup_socket_addr_udp(packet.dst))?;
+            let addr = self.0.ip.with(|ip| ip.udp_addr(packet.dst))?;
             self.0.socket.send(Addressed {
                 addr,
                 content: packet,
