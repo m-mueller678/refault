@@ -11,11 +11,7 @@ use agnostic_lite::{
     time::{AsyncLocalInterval, AsyncLocalSleep, AsyncLocalTimeout, AsyncTimeout, Delay},
 };
 use futures::{FutureExt, Stream};
-use std::{
-    future::ready,
-    pin::Pin,
-    time::{Duration, Instant},
-};
+use std::{future::ready, pin::Pin, time::Instant};
 use timeout::Timeout;
 
 #[derive(Clone, Copy)]
@@ -305,45 +301,5 @@ impl AsyncLocalSleep for Sleep {
 
     fn reset(mut self: Pin<&mut Self>, deadline: Self::Instant) {
         self.set(sleep_until(deadline))
-    }
-}
-
-impl<F: Future> AsyncLocalTimeout<F> for Timeout<F> {
-    type Instant = Instant;
-
-    fn timeout_local(_timeout: Duration, _fut: F) -> Self
-    where
-        Self: Sized + Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>>,
-        F: Future,
-    {
-        todo!()
-    }
-
-    fn timeout_local_at(_deadline: Self::Instant, _fut: F) -> Self
-    where
-        Self: Sized + Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>>,
-        F: Future,
-    {
-        todo!()
-    }
-}
-
-impl<F: Future + Send> AsyncTimeout<F> for Timeout<F> {
-    type Instant = Instant;
-
-    fn timeout(_timeout: Duration, _fut: F) -> Self
-    where
-        F: Future + Send,
-        Self: Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>> + Send + Sized,
-    {
-        todo!()
-    }
-
-    fn timeout_at(_deadline: Self::Instant, _fut: F) -> Self
-    where
-        F: Future + Send,
-        Self: Future<Output = Result<F::Output, agnostic_lite::time::Elapsed>> + Send + Sized,
-    {
-        todo!()
     }
 }
