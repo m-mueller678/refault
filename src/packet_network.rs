@@ -55,7 +55,7 @@ impl<T> Addressed<T> {
 ///
 /// This function is used to customize how the simulated network behaves.
 /// Given a packet, it should invoke methods on the passed `Receivers` handle to cause the recipient to receive the packet.
-/// An implementation that always delivers packets after a fixed delay is provided with [perfecet_connectivity].
+/// An implementation that always delivers packets after a fixed delay is provided with [perfect_connectivity].
 /// A send function may choose to deliver the same packet multiple times, not deliver it at all, or deliver errors instead to simulate various network behaviours.
 ///
 /// This is invoked by the network simulator in [send][ConNet::send].
