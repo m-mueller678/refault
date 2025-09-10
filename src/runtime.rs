@@ -49,6 +49,7 @@ impl Runtime {
     /// Within the simulation, `f` is invoked to create a future, which is then spawned on the runtime's executor.
     /// After `f` completes, the executor starts running.
     /// The simulation continues until no task can make any more progress.
+    // TODO return number of remaining tasks
     pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
         self.run_simulation(
             Box::new(|| {

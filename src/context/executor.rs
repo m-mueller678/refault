@@ -6,7 +6,7 @@ use crate::{
     context::{Context2, with_context},
 };
 use cooked_waker::{IntoWaker, WakeRef};
-use futures_channel::oneshot;
+use futures::channel::oneshot;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Debug, Display};
@@ -175,6 +175,16 @@ impl<T> TaskHandle<T> {
 /// Dropping this will not abort the task.
 #[derive(Clone)]
 pub struct AbortHandle(CheckSend<Arc<TaskShared>, SimBound>);
+
+/// A handle that aborts the associated task when dropped.
+#[derive(Clone)]
+pub struct AbortGuard(AbortHandle);
+
+impl Drop for AbortGuard {
+    fn drop(&mut self) {
+        self.0.abort_inner();
+    }
+}
 
 const TASK_CANCELLED: usize = 0;
 const TASK_READY: usize = 1;
@@ -353,6 +363,10 @@ impl AbortHandle {
     /// Abort the associated task.
     pub fn abort(self) {
         self.abort_inner();
+    }
+
+    pub fn abort_on_drop(self) -> AbortGuard {
+        AbortGuard(self)
     }
 
     fn abort_inner(&self) {

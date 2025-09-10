@@ -225,7 +225,7 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         ready!(self.as_mut().poll_flush(cx))?;
         let this = &mut *self;
         this.send_future = Some(Box::pin(this.net.with(|net| {
-            net.send(WrappedPacket {
+            net.send_wrapped(WrappedPacket {
                 src: Addr {
                     node: NodeId::current(),
                     port: this.peer_sim.port,
@@ -256,7 +256,7 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         }
         this.close_sent = true;
         this.send_future = Some(Box::pin(this.net.with(|net| {
-            net.send(WrappedPacket {
+            net.send_wrapped(WrappedPacket {
                 src: Addr {
                     node: NodeId::current(),
                     port: this.peer_sim.port,

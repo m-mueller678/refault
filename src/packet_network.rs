@@ -115,6 +115,8 @@ pub type SocketReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<
 pub type SendFuture = impl Future<Output = Result<(), Error>> + Send;
 pub type SocketSendFuture = impl Future<Output = Result<(), Error>> + Send;
 
+#[derive(thiserror::Error, Debug)]
+#[error("socket exists for address {addr:?}, type {ty:?}")]
 pub struct AddrInUseError {
     addr: Addr,
     ty: &'static str,
@@ -122,13 +124,7 @@ pub struct AddrInUseError {
 
 impl From<AddrInUseError> for Error {
     fn from(value: AddrInUseError) -> Self {
-        Error::new(
-            std::io::ErrorKind::AddrInUse,
-            format!(
-                "socket exists for address {:?}, type {:?}",
-                value.addr, value.ty
-            ),
-        )
+        Error::new(std::io::ErrorKind::AddrInUse, value)
     }
 }
 
@@ -176,7 +172,7 @@ impl<T: Packet> ConNetSocket<T> {
     #[define_opaque(SocketSendFuture)]
     pub fn send_any<U: Packet>(&self, packet: Addressed<U>) -> SocketSendFuture {
         self.simulator.with(|net| {
-            net.send(WrappedPacket {
+            net.send_wrapped(WrappedPacket {
                 src: self.local_addr,
                 dst: packet.addr,
                 content: Box::new(packet.content),
@@ -217,9 +213,17 @@ impl ConNet {
     }
 
     #[define_opaque(SendFuture)]
-    pub fn send(&mut self, packet: WrappedPacket) -> SendFuture {
+    pub fn send_wrapped(&mut self, packet: WrappedPacket) -> SendFuture {
         assert!(packet.src.node == NodeId::current());
         NodeBound::wrap((self.send_function)(packet))
+    }
+
+    pub fn send<T: Packet>(&mut self, src: Addr, dst: Addr, content: T) -> SendFuture {
+        self.send_wrapped(WrappedPacket {
+            src,
+            dst,
+            content: Box::new(content),
+        })
     }
 
     /// Cause the destination node to receive the packet at the specified time.
