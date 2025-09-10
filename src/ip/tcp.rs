@@ -1,6 +1,8 @@
 //! # Deviations
 //! - When a TcpListener is dropped, the connections created from it remain open and prevent a new listener from being created. Linux closes all connections.
 //! - Tcp connections do not time out
+//! - Closing completes immediately, there is no confirmation by the peer
+//! - Closing affects only one half of the direction. After closing the writer, the reader will continue to receive data sent
 
 use super::{IpAddrSimulator, Result};
 use crate::{
@@ -41,12 +43,14 @@ struct TcpIncomingConnection {
     client_sim: Addr,
 }
 
+#[derive(Debug)]
 enum TcpDatagram {
     Connect {
         client: SocketAddr,
         server: SocketAddr,
     },
     Refused,
+    Close,
     Accept,
     Data(Bytes),
 }
@@ -136,6 +140,7 @@ pub struct OwnedReadHalfUnsend {
     socket: ConNetSocket<TcpDatagram>,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
+    close_received: Cell<bool>,
     _port_assignment: Either<Rc<TcpPortAssignment>, Rc<TcpListenHandle>>,
 }
 
@@ -185,6 +190,7 @@ pub struct OwnedWriteHalfUnsend {
     local_addr: SocketAddr,
     _port_assignment: Either<Rc<TcpPortAssignment>, Rc<TcpListenHandle>>,
     net: SimulatorHandle<ConNet>,
+    close_sent: bool,
 }
 
 pub struct OwnedWriteHalf(pub CheckSend<OwnedWriteHalfUnsend, NodeBound>);
@@ -213,6 +219,9 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize>> {
+        if self.close_sent {
+            panic!("poll_writer after poll_close");
+        }
         ready!(self.as_mut().poll_flush(cx))?;
         let this = &mut *self;
         this.send_future = Some(Box::pin(this.net.with(|net| {
@@ -239,8 +248,25 @@ impl AsyncWrite for OwnedWriteHalfUnsend {
         }
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
-        todo!()
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        ready!(self.as_mut().poll_flush(cx))?;
+        let this = &mut *self;
+        if this.close_sent {
+            return Poll::Ready(Ok(()));
+        }
+        this.close_sent = true;
+        this.send_future = Some(Box::pin(this.net.with(|net| {
+            net.send(WrappedPacket {
+                src: Addr {
+                    node: NodeId::current(),
+                    port: this.peer_sim.port,
+                },
+                dst: this.peer_sim,
+                content: Box::new(TcpDatagram::Close),
+            })
+        })));
+        ready!(self.poll_flush(cx))?;
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -364,6 +390,7 @@ impl TcpStream {
             })
             .await?;
         let received = socket.receive().await?;
+        dbg!(&received.content);
         debug_assert!(matches!(received.content, TcpDatagram::Accept));
         let port_assignment = Either::Left(Rc::new(port_assignment));
         Ok(TcpStream(NodeBound::wrap(TcpStreamUnSend {
@@ -374,6 +401,7 @@ impl TcpStream {
                 peer_sim,
                 peer_addr,
                 net: simulator().unwrap_check_send_sim(),
+                close_sent: false,
             },
             read: OwnedReadHalfUnsend {
                 local_addr,
@@ -382,6 +410,7 @@ impl TcpStream {
                 peer_addr,
                 socket: socket.unwrap_check_send_node(),
                 receive_future: Cell::new(None),
+                close_received: Cell::new(false),
             },
         })))
     }
@@ -391,6 +420,8 @@ impl OwnedReadHalfUnsend {
     fn poll_recv_to_buffer(&self, cx: &mut Context) -> Poll<Result<Bytes>> {
         if let Some(x) = self.recv_buffer.take() {
             Poll::Ready(Ok(x))
+        } else if self.close_received.get() {
+            Poll::Ready(Ok(Bytes::new()))
         } else {
             let mut fut = self
                 .receive_future
@@ -401,6 +432,13 @@ impl OwnedReadHalfUnsend {
                     content: TcpDatagram::Data(x),
                     ..
                 })) => Poll::Ready(Ok(x)),
+                Poll::Ready(Ok(Addressed {
+                    content: TcpDatagram::Close,
+                    ..
+                })) => {
+                    self.close_received.set(true);
+                    Poll::Ready(Ok(Bytes::new()))
+                }
                 Poll::Ready(Ok(_)) => {
                     panic!("received non-data packet after connection established")
                 }
@@ -474,6 +512,7 @@ impl agnostic_net::TcpListener for TcpListener {
                     peer_addr: incoming.client_ip,
                     _port_assignment: Either::Right(this.listener_handle.clone()),
                     net: self.0.net.clone(),
+                    close_sent: false,
                 },
                 read: OwnedReadHalfUnsend {
                     recv_buffer: Cell::new(None),
@@ -482,6 +521,7 @@ impl agnostic_net::TcpListener for TcpListener {
                     local_addr: this.local_addr,
                     peer_addr: incoming.client_ip,
                     _port_assignment: Either::Right(this.listener_handle.clone()),
+                    close_received: Cell::new(false),
                 },
             })),
             incoming.client_ip,
@@ -692,7 +732,10 @@ impl IpAddrSimulator {
                                     .ok();
                             }
                         }
-                        TcpDatagram::Refused | TcpDatagram::Accept | TcpDatagram::Data(_) => {
+                        TcpDatagram::Refused
+                        | TcpDatagram::Close
+                        | TcpDatagram::Accept
+                        | TcpDatagram::Data(_) => {
                             panic!()
                         }
                     }
