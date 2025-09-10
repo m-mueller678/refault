@@ -1,4 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell, collections::HashMap, future::poll_fn, io::ErrorKind, marker::PhantomData,
+    rc::Rc, sync::Arc,
+};
 
 use either::Either::{self, Left, Right};
 use futures::{
@@ -10,7 +13,7 @@ use tower::Service;
 use crate::{
     check_send::{CheckSend, Constraint, NodeBound},
     context::executor::AbortGuard,
-    packet_network::{Addr, ConNet, ConNetSocket, Packet},
+    packet_network::{Addr, Addressed, ConNet, ConNetSocket, Packet},
     runtime::{Id, spawn},
     simulator::simulator,
 };
@@ -25,8 +28,9 @@ enum TowerResponse<R> {
     Complete { result: R, id: Id },
 }
 
-type TowerResult<R, S: Service<R>> = Result<S::Response, Either<S::Error, std::io::Error>>;
-type ReqWithSender<R, S: Service<R>> = (R, oneshot::Sender<TowerResult<R, S>>);
+type TowerResult<R, S> =
+    Result<<S as Service<R>>::Response, Either<<S as Service<R>>::Error, std::io::Error>>;
+type ReqWithSender<R, S> = (R, oneshot::Sender<TowerResult<R, S>>);
 
 pub struct ClientUnSend<R, S: Service<R>> {
     request_sender: mpsc::Sender<ReqWithSender<R, S>>,
@@ -48,13 +52,19 @@ impl<R, S: Service<R>> Service<R> for Client<R, S> {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0.request_sender.poll_ready(cx).map(|x| Ok(x.unwrap()))
+        self.0.request_sender.poll_ready(cx).map(|x| {
+            x.unwrap();
+            Ok(())
+        })
     }
 
     fn call(&mut self, req: R) -> Self::Future {
         let (s, r) = oneshot::channel();
         self.0.request_sender.try_send((req, s)).unwrap();
-        async move { r.await.unwrap() }
+        async move {
+            r.await
+                .unwrap_or_else(|_| Err(Right(ErrorKind::ConnectionReset.into())))
+        }
     }
 }
 
@@ -62,6 +72,7 @@ impl<R, S: Service<R>> Client<R, S>
 where
     S::Response: 'static,
     S::Error: 'static,
+    S::Future: 'static,
     R: 'static,
 {
     pub fn new(remote: Addr) -> Self {
@@ -78,7 +89,7 @@ where
                 let (req, responder) = r.next().await.unwrap();
                 let id = Id::new();
                 match net
-                    .with(|net| net.send(local_addr, remote, TowerRequest::Start { req: req, id }))
+                    .with(|net| net.send(local_addr, remote, TowerRequest::Start { req, id }))
                     .await
                 {
                     Ok(()) => {
@@ -122,5 +133,42 @@ where
             _recv_task: recv_task.abort_handle().abort_on_drop(),
             _p: PhantomData,
         }))
+    }
+}
+
+pub async fn run_server<R, S: Service<R>>(
+    port: Id,
+    mut service: S,
+) -> Result<(), Either<S::Error, std::io::Error>>
+where
+    R: 'static,
+    S::Response: 'static,
+    S::Error: 'static,
+    S::Future: 'static,
+{
+    let socket = ConNetSocket::open(port).map_err(|e| Right(e.into()))?;
+    loop {
+        let request: Addressed<TowerRequest<R>> = socket.receive().await.map_err(Right)?;
+        poll_fn(|cx| service.poll_ready(cx)).await.map_err(Left)?;
+        match request.content {
+            TowerRequest::Start { req, id } => {
+                let fut = service.call(req);
+                let local_addr = socket.local_addr();
+                spawn(async move {
+                    let result = fut.await;
+                    simulator::<ConNet>()
+                        .with(|net| {
+                            net.send(
+                                local_addr,
+                                request.addr,
+                                TowerResponse::Complete { result, id },
+                            )
+                        })
+                        .await
+                        .ok();
+                })
+                .detach()
+            }
+        }
     }
 }
