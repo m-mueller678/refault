@@ -117,22 +117,15 @@ pin_project_lite::pin_project! {
     /// A task handle can be used to await a tasks completion or to abort it.
     /// Awaiting it will return the value returned by the spawned future or `None` if the task was aborted.
     ///
-    /// A task handle must either be polled to completion or destroyd via [detach](Self::detach) or [abort](Self::abort).
-    /// Dropping the handle without doing any of those will panic.
+    /// A task handle should either be polled to completion or destroyd via [detach](Self::detach) or [abort](Self::abort).
+    /// Dropping the handle will implicitly detach it.
+    /// Explicitly detaching is preferrable to communicate intent.
     #[must_use]
     pub struct TaskHandle<T> {
         #[pin]
         result: oneshot::Receiver<T>,
         // this is always some until the handle is consumed via detach or abort.
-        abort: Option<AbortHandle>,
-    }
-
-    impl<T> PinnedDrop for TaskHandle<T> {
-        fn drop(this: Pin<&mut Self>) {
-            if let Some(abort)=&this.abort{
-                abort.abort_inner();
-            }
-        }
+        abort: AbortHandle,
     }
 }
 
@@ -155,18 +148,16 @@ impl Error for TaskAborted {}
 
 impl<T> TaskHandle<T> {
     /// Abort the associated task.
-    pub fn abort(mut self) {
-        self.abort.take().unwrap().abort();
+    pub fn abort(self) {
+        self.abort.abort_inner();
     }
 
     /// Detach this handle from the task, allowing the task to keep running.
-    pub fn detach(mut self) {
-        self.abort.take().unwrap();
-    }
+    pub fn detach(self) {}
 
     /// Obtain a handle that can be used to abort the associated task.
     pub fn abort_handle(&self) -> AbortHandle {
-        self.abort.as_ref().unwrap().clone()
+        self.abort.clone()
     }
 }
 
@@ -254,11 +245,11 @@ impl Executor {
         };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: Some(AbortHandle(SimBound::wrap(task_entry.shared.clone()))),
+            abort: AbortHandle(SimBound::wrap(task_entry.shared.clone())),
         };
         self.tasks.insert(task_id, task_entry);
         self.nodes[node.0].tasks.insert(task_id);
-        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.as_ref().unwrap().0);
+        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.0);
         task_handle
     }
 

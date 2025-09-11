@@ -5,9 +5,10 @@ use std::{
 
 use either::Either::{self, Left, Right};
 use futures::{
-    StreamExt,
+    SinkExt, StreamExt,
     channel::{mpsc, oneshot},
 };
+use scopeguard::guard;
 use tower::Service;
 
 use crate::{
@@ -40,7 +41,7 @@ pub struct ClientUnSend<A, B, E> {
 
 pub struct Client<A, B, E>(pub CheckSend<ClientUnSend<A, B, E>, NodeBound>);
 
-impl<A, B, E> Service<A> for Client<A, B, E> {
+impl<A, B, E: std::fmt::Debug> Service<A> for Client<A, B, E> {
     type Response = B;
 
     type Error = Either<E, std::io::Error>;
@@ -58,9 +59,13 @@ impl<A, B, E> Service<A> for Client<A, B, E> {
     }
 
     fn call(&mut self, req: A) -> Self::Future {
-        let (s, r) = oneshot::channel();
-        self.0.request_sender.try_send((req, s)).unwrap();
+        let mut sender = self.0.request_sender.clone();
         async move {
+            let (s, r) = oneshot::channel();
+            sender
+                .send((req, s))
+                .await
+                .map_err(|_| Right(ErrorKind::ConnectionReset.into()))?;
             r.await
                 .unwrap_or_else(|_| Err(Right(ErrorKind::ConnectionReset.into())))
         }
@@ -75,12 +80,12 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
         let responders_2 = responders.clone();
         let local_addr = socket.local_addr();
         let send_task = spawn(async move {
-            let net = simulator::<ConNet>();
+            let _g = dbg!(guard((), |()| dbg!()));
             loop {
                 // if sender is dropped, this task is aborted
                 let (req, responder) = r.next().await.unwrap();
                 let id = Id::new();
-                match net
+                match simulator::<ConNet>()
                     .with(|net| net.send(local_addr, remote, TowerRequest::Start { req, id }))
                     .await
                 {
