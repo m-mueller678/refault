@@ -28,23 +28,22 @@ enum TowerResponse<R> {
     Complete { result: R, id: Id },
 }
 
-type TowerResult<R, S> =
-    Result<<S as Service<R>>::Response, Either<<S as Service<R>>::Error, std::io::Error>>;
-type ReqWithSender<R, S> = (R, oneshot::Sender<TowerResult<R, S>>);
+type TowerResult<B, E> = Result<B, Either<E, std::io::Error>>;
+type ReqWithSender<A, B, E> = (A, oneshot::Sender<TowerResult<B, E>>);
 
-pub struct ClientUnSend<R, S: Service<R>> {
-    request_sender: mpsc::Sender<ReqWithSender<R, S>>,
+pub struct ClientUnSend<A, B, E> {
+    request_sender: mpsc::Sender<ReqWithSender<A, B, E>>,
     _send_task: AbortGuard,
     _recv_task: AbortGuard,
     _p: PhantomData<*const u8>,
 }
 
-pub struct Client<R, S: Service<R>>(pub CheckSend<ClientUnSend<R, S>, NodeBound>);
+pub struct Client<A, B, E>(pub CheckSend<ClientUnSend<A, B, E>, NodeBound>);
 
-impl<R, S: Service<R>> Service<R> for Client<R, S> {
-    type Response = S::Response;
+impl<A, B, E> Service<A> for Client<A, B, E> {
+    type Response = B;
 
-    type Error = Either<S::Error, std::io::Error>;
+    type Error = Either<E, std::io::Error>;
 
     type Future = impl Future<Output = Result<Self::Response, Self::Error>>;
 
@@ -58,7 +57,7 @@ impl<R, S: Service<R>> Service<R> for Client<R, S> {
         })
     }
 
-    fn call(&mut self, req: R) -> Self::Future {
+    fn call(&mut self, req: A) -> Self::Future {
         let (s, r) = oneshot::channel();
         self.0.request_sender.try_send((req, s)).unwrap();
         async move {
@@ -68,17 +67,10 @@ impl<R, S: Service<R>> Service<R> for Client<R, S> {
     }
 }
 
-impl<R, S: Service<R>> Client<R, S>
-where
-    S::Response: 'static,
-    S::Error: 'static,
-    S::Future: 'static,
-    R: 'static,
-{
+impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
     pub fn new(remote: Addr) -> Self {
         let (s, mut r) = mpsc::channel(0);
-        let socket =
-            ConNetSocket::<TowerResponse<Result<S::Response, S::Error>>>::open(Id::new()).unwrap();
+        let socket = ConNetSocket::<TowerResponse<Result<B, E>>>::open(Id::new()).unwrap();
         let responders = Rc::new(RefCell::new(HashMap::<Id, oneshot::Sender<_>>::new()));
         let responders_2 = responders.clone();
         let local_addr = socket.local_addr();
