@@ -24,8 +24,8 @@ pub trait Packet: Any {
         ConstTypeId::of::<Self>()
     }
 
-    fn service_level(&self, _src: Addr, _dst: Addr) -> PacketServiceLevel {
-        PacketServiceLevel {
+    fn service_level(&self, _src: Addr, _dst: Addr) -> ServiceLevel {
+        ServiceLevel {
             ordering: None,
             allow_drop: true,
             allow_multiple: false,
@@ -40,7 +40,7 @@ pub trait Packet: Any {
     }
 }
 
-pub struct PacketServiceLevel {
+pub struct ServiceLevel {
     pub ordering: Option<OrderingKey>,
     pub allow_drop: bool,
     pub allow_multiple: bool,
@@ -83,7 +83,7 @@ pub struct Addr {
 ///
 /// When returned from a receiving function, the address refers to the sender.
 /// When passed into a transmitting function, it refers to the recipient.
-pub struct Addressed<T = Box<dyn Packet>> {
+pub struct Addressed<T> {
     pub addr: Addr,
     pub content: T,
 }
@@ -107,7 +107,7 @@ impl<T> Addressed<T> {
 /// This is invoked by the network simulator in [send][ConNet::send].
 /// Attempting to access the simmulator from within this call will therefore panic.
 /// Instead, access the simulator from the returned future.
-pub type SendFunction = Box<dyn FnMut(&mut ConNetQueues, Rc<WrappedPacket>) -> SendFunctionOutput>;
+pub type SendFunction = Box<dyn FnMut(&mut ConNetQueues, WrappedPacket) -> SendFunctionOutput>;
 pub type SendFunctionOutput =
     Either<Result<(), Error>, Pin<Box<dyn Future<Output = Result<(), Error>>>>>;
 
@@ -118,47 +118,60 @@ pub fn perfect_connectivity(latency: Duration) -> SendFunction {
     })
 }
 
-pub struct WrappedPacket<T: ?Sized = dyn Packet> {
+pub struct PacketHeader {
     src: Addr,
     dst: Addr,
     ty: ConstTypeId,
-    service_level: PacketServiceLevel,
+    service_level: ServiceLevel,
+}
+
+struct WrappedPacketImpl<T> {
+    pub header: PacketHeader,
     packet: T,
 }
 
-impl<T: Packet> WrappedPacket<T> {
-    fn new(src: Addr, dst: Addr, packet: T) -> Rc<WrappedPacket<T>> {
-        Rc::new(WrappedPacket {
-            src,
-            dst,
-            ty: packet.packet_type_id(),
-            service_level: packet.service_level(src, dst),
+#[derive(Clone)]
+pub struct WrappedPacket(Rc<dyn WrappedPacketPrivate>);
+
+impl WrappedPacket {
+    pub fn new<T: Packet>(src: Addr, dst: Addr, packet: T) -> Self {
+        WrappedPacket(Rc::new(WrappedPacketImpl {
+            header: PacketHeader {
+                src,
+                dst,
+                ty: packet.packet_type_id(),
+                service_level: packet.service_level(src, dst),
+            },
             packet,
-        })
+        }))
     }
+    pub fn header(&self) -> &PacketHeader {
+        self.0.project().0
+    }
+    pub fn packet(&self) -> &dyn Packet {
+        self.0.project().1
+    }
+}
+
+trait WrappedPacketPrivate: Any {
+    fn project(&self) -> (&PacketHeader, &dyn Packet);
+}
+
+impl<T: Packet> WrappedPacketPrivate for WrappedPacketImpl<T> {
+    fn project(&self) -> (&PacketHeader, &dyn Packet) {
+        (&self.header, &self.packet)
+    }
+}
+
+impl PacketHeader {
     pub fn src(&self) -> Addr {
         self.src
     }
     pub fn dst(&self) -> Addr {
         self.dst
     }
-    pub fn packet(&self) -> &T {
-        &self.packet
-    }
-    pub fn service_level(&self) -> &PacketServiceLevel {
+    pub fn service_level(&self) -> &ServiceLevel {
         &self.service_level
-    }
-}
-
-impl WrappedPacket<dyn Packet> {
-    pub fn downcast<T: Packet>(self: Rc<WrappedPacket<dyn Packet>>) -> Rc<WrappedPacket<T>> {
-        unsafe {
-            // TODO run this though miri
-            assert!(<dyn Any>::is::<T>(&self.packet));
-            let raw: *const WrappedPacket<dyn Packet> = Rc::into_raw(self);
-            let raw = raw as *const WrappedPacket<T>;
-            Rc::from_raw(raw)
-        }
     }
 }
 
@@ -167,7 +180,7 @@ pub struct ConNet {
     queues: ConNetQueues,
 }
 
-type Inbox = LocalChannel<Result<Rc<WrappedPacket>, Error>, [Result<Rc<WrappedPacket>, Error>; 8]>;
+type Inbox = LocalChannel<Result<WrappedPacket, Error>, [Result<WrappedPacket, Error>; 8]>;
 
 impl Simulator for ConNet {
     fn start_node(&mut self) {
@@ -272,10 +285,12 @@ impl<T: Packet> ConNetSocket<T> {
         let inbox = self.inbox.clone();
         async move {
             inbox.receive().await.unwrap().map(|wrapped| {
-                let addr = wrapped.src;
+                let wrapped = (wrapped.0 as Rc<dyn Any>)
+                    .downcast::<WrappedPacketImpl<T>>()
+                    .unwrap();
                 Addressed {
-                    addr,
-                    content: match Rc::try_unwrap(wrapped.downcast::<T>()) {
+                    addr: wrapped.header.src,
+                    content: match Rc::try_unwrap(wrapped) {
                         Ok(x) => x.packet,
                         Err(x) => x.packet.clone_packet(),
                     },
@@ -308,8 +323,8 @@ impl ConNet {
     }
 
     #[define_opaque(SendFuture)]
-    pub fn send_wrapped(&mut self, packet: Rc<WrappedPacket>) -> SendFuture {
-        assert!(packet.src.node == NodeId::current());
+    pub fn send_wrapped(&mut self, packet: WrappedPacket) -> SendFuture {
+        assert!(packet.header().src.node == NodeId::current());
         (self.send_function)(&mut self.queues, packet).map_left(ready)
     }
 
@@ -328,8 +343,9 @@ pub struct ConNetQueues {
 
 impl ConNetQueues {
     /// Cause the destination node to receive the packet at the specified time.
-    pub fn enqueue_packet(&mut self, at: Instant, msg: Rc<WrappedPacket>) {
-        let key = (msg.dst, msg.ty);
+    pub fn enqueue_packet(&mut self, at: Instant, msg: WrappedPacket) {
+        let header = msg.header();
+        let key = (header.dst, header.ty);
         Self::enqueue(at, key, Ok(msg));
     }
 
@@ -338,7 +354,7 @@ impl ConNetQueues {
         Self::enqueue(at, (dst, ty), Err(error));
     }
 
-    fn enqueue(at: Instant, key: (Addr, ConstTypeId), msg: Result<Rc<WrappedPacket>, Error>) {
+    fn enqueue(at: Instant, key: (Addr, ConstTypeId), msg: Result<WrappedPacket, Error>) {
         NodeId::INIT.spawn(async move {
             sleep_until(at).await;
             simulator::<ConNet>().with(|net| {
