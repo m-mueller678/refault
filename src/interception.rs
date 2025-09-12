@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use crate::context::Context2;
-use rand::Rng;
+use rand_core::RngCore;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isize {
@@ -10,7 +10,7 @@ unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isiz
             unsafe {
                 // ensure memory is initialized. Hopefully this is optimized out.
                 buf.write_bytes(0, buflen);
-                rng.fill(std::slice::from_raw_parts_mut(buf, buflen));
+                rng.fill_bytes(std::slice::from_raw_parts_mut(buf, buflen));
                 buflen as isize
             }
         } else {

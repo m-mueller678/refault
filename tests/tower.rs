@@ -1,3 +1,4 @@
+#![cfg(feature = "tower")]
 use std::time::{Duration, Instant};
 
 use futures::{StreamExt, stream::FuturesUnordered};

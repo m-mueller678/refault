@@ -4,30 +4,31 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["send-bind"]
 serde = ["dep:serde"]
+tower = ["dep:tower"]
+agnostic-lite = ["dep:agnostic-lite", "send-bind"]
+send-bind = []
 
 [dependencies]
+futures = { version = "0.3.31", default-features = false, features = ["std"]}
 libc = "1.0.0-alpha.1"
-rand = { version = "0.9" }
+rand_core = { version = "0.9" }
 rand_chacha = "0.9"
-futures = "0.3.31"
 pin-project-lite = "0.2.16"
 priority-queue = "2.0.0"
 pin-arc = "0.2.1"
 cooked-waker = "5"
 either = "1.15"
 scopeguard = "1.2"
-smallvec = "1"
-bytes = "1"
-agnostic-net = "0.2.3"
-agnostic-lite="0.5.6"
 futures-intrusive = "0.5"
-impl-more="0.3.1"
-typeid="1"
-tower = "0.5.2"
+typeid = "1"
 thiserror = "2"
-serde = {optional = true,features = ["derive"],version="1"}
+serde = { optional = true, features = ["derive"], version = "1" }
+tower = { optional = true, version = "0.5.2" }
+agnostic-lite = { optional = true, version = "0.5.6", features = ["time"] }
 
 [dev-dependencies]
 getrandom = "0.3.3"
-tower = {version="0.5.2",features=["util"]}
+rand = "0.9"
+tower = { version = "0.5.2", features = ["util"] }
