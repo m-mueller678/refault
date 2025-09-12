@@ -23,7 +23,6 @@ either = "1.15"
 scopeguard = "1.2"
 futures-intrusive = "0.5"
 typeid = "1"
-thiserror = "2"
 serde = { optional = true, features = ["derive"], version = "1" }
 tower = { optional = true, version = "0.5.2" }
 agnostic-lite = { optional = true, version = "0.5.6", features = ["time"] }

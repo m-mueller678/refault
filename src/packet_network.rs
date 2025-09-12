@@ -9,6 +9,7 @@ use futures_intrusive::channel::LocalChannel;
 use std::{
     any::{Any, type_name},
     collections::{HashMap, hash_map::Entry},
+    fmt::Display,
     io::Error,
     pin::Pin,
     rc::Rc,
@@ -115,12 +116,20 @@ pub type SocketReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<
 pub type SendFuture = impl Future<Output = Result<(), Error>>;
 pub type SocketSendFuture = impl Future<Output = Result<(), Error>>;
 
-#[derive(thiserror::Error, Debug)]
-#[error("socket exists for address {addr:?}, type {ty:?}")]
+#[derive(Debug)]
 pub struct AddrInUseError {
     addr: Addr,
     ty: &'static str,
 }
+
+impl Display for AddrInUseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let AddrInUseError { addr, ty } = self;
+        write!(f, "socket exists for address {addr:?}, type {ty:?}")
+    }
+}
+
+impl std::error::Error for AddrInUseError {}
 
 impl From<AddrInUseError> for Error {
     fn from(value: AddrInUseError) -> Self {
