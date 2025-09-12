@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use refault::{
-    packet_network::{Addr, ConNet, perfect_connectivity},
+    net::{Addr, Net, perfect_connectivity},
     runtime::{Id, NodeId, Runtime},
     simulator::add_simulator,
     time::sleep,

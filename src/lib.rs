@@ -9,7 +9,7 @@ pub mod agnostic_lite_runtime;
 mod context;
 mod event;
 mod interception;
-pub mod packet_network;
+pub mod net;
 pub mod runtime;
 pub mod simulator;
 pub use context::time;
