@@ -1,3 +1,4 @@
+#![feature(downcast_unchecked)]
 #![feature(abort_unwind)]
 #![feature(type_alias_impl_trait)]
 #![feature(impl_trait_in_assoc_type)]
