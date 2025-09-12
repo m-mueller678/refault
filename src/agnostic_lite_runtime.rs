@@ -3,6 +3,7 @@ mod timeout;
 use crate::{
     context::{executor::TaskAborted, with_context},
     runtime::{TaskHandle, spawn},
+    send_bind::{SimBound, SimNodeBound},
     time::{Sleep, sleep, sleep_until},
 };
 use agnostic_lite::{
@@ -25,10 +26,10 @@ impl RuntimeLite for SimRuntime {
     type AfterSpawner = Spawner;
     type Interval = Interval;
     type LocalInterval = Interval;
-    type Sleep = Sleep;
-    type LocalSleep = Sleep;
-    type Delay<F: Future + Send> = Delay<F, Sleep>;
-    type LocalDelay<F: Future> = Delay<F, Sleep>;
+    type Sleep = SimNodeBound<Sleep>;
+    type LocalSleep = SimNodeBound<Sleep>;
+    type Delay<F: Future + Send> = Delay<F, Self::Sleep>;
+    type LocalDelay<F: Future> = Delay<F, Self::LocalSleep>;
     type Timeout<F: Future + Send> = Timeout<F>;
     type LocalTimeout<F: Future> = Timeout<F>;
 
@@ -50,7 +51,7 @@ impl RuntimeLite for SimRuntime {
     }
 
     fn yield_now() -> impl Future<Output = ()> + Send {
-        sleep_until(Instant::now()).map(drop)
+        Self::sleep_until(Instant::now()).map(drop)
     }
 
     fn interval(_interval: core::time::Duration) -> Self::Interval {
@@ -73,11 +74,11 @@ impl RuntimeLite for SimRuntime {
     }
 
     fn sleep(duration: core::time::Duration) -> Self::Sleep {
-        sleep(duration)
+        sleep(duration).into()
     }
 
     fn sleep_until(instant: Self::Instant) -> Self::Sleep {
-        sleep_until(instant)
+        sleep_until(instant).into()
     }
 
     fn sleep_local(duration: core::time::Duration) -> Self::LocalSleep {
@@ -148,33 +149,33 @@ impl RuntimeLite for SimRuntime {
 #[derive(Clone, Copy)]
 pub struct Spawner {}
 
-impl<O> JoinHandle<O> for TaskHandle<O> {
+impl<O> JoinHandle<O> for SimBound<TaskHandle<O>> {
     type JoinError = TaskAborted;
 
     fn abort(self) {
-        self.abort();
+        self.unwrap_sim_bound().abort();
     }
 
     fn detach(self)
     where
         Self: Sized,
     {
-        self.detach();
+        self.unwrap_sim_bound().detach();
     }
 }
 
-impl<O> LocalJoinHandle<O> for TaskHandle<O> {
+impl<O> LocalJoinHandle<O> for SimBound<TaskHandle<O>> {
     type JoinError = TaskAborted;
 
     fn detach(self)
     where
         Self: Sized,
     {
-        self.detach();
+        self.unwrap_sim_bound().detach();
     }
 }
 
-impl<O: Send + 'static> AfterHandle<O> for TaskHandle<O> {
+impl<O: Send + 'static> AfterHandle<O> for SimBound<TaskHandle<O>> {
     type JoinError = TaskAborted;
 
     fn cancel(self) -> impl Future<Output = Option<Result<O, Self::JoinError>>> + Send {
@@ -210,31 +211,31 @@ impl Yielder for Spawner {
 }
 
 impl AsyncSpawner for Spawner {
-    type JoinHandle<O: Send + 'static> = TaskHandle<O>;
+    type JoinHandle<O: Send + 'static> = SimBound<TaskHandle<O>>;
 
     fn spawn<F>(future: F) -> Self::JoinHandle<F::Output>
     where
         F::Output: Send + 'static,
         F: Future + Send + 'static,
     {
-        spawn(future)
+        spawn(future).into()
     }
 }
 
 impl AsyncLocalSpawner for Spawner {
-    type JoinHandle<O: 'static> = TaskHandle<O>;
+    type JoinHandle<O: 'static> = SimBound<TaskHandle<O>>;
 
     fn spawn_local<F>(future: F) -> Self::JoinHandle<F::Output>
     where
         F::Output: 'static,
         F: Future + 'static,
     {
-        spawn(future)
+        spawn(future).into()
     }
 }
 
 impl AsyncBlockingSpawner for Spawner {
-    type JoinHandle<R: Send + 'static> = TaskHandle<R>;
+    type JoinHandle<R: Send + 'static> = SimBound<TaskHandle<R>>;
 
     fn spawn_blocking<F, R>(_f: F) -> Self::JoinHandle<R>
     where
@@ -248,7 +249,7 @@ impl AsyncBlockingSpawner for Spawner {
 impl AsyncAfterSpawner for Spawner {
     type Instant = Instant;
 
-    type JoinHandle<F: Send + 'static> = TaskHandle<F>;
+    type JoinHandle<F: Send + 'static> = SimBound<TaskHandle<F>>;
 
     fn spawn_after<F>(duration: std::time::Duration, future: F) -> Self::JoinHandle<F::Output>
     where
@@ -296,10 +297,10 @@ impl Stream for Interval {
     }
 }
 
-impl AsyncLocalSleep for Sleep {
+impl AsyncLocalSleep for SimNodeBound<Sleep> {
     type Instant = Instant;
 
     fn reset(mut self: Pin<&mut Self>, deadline: Self::Instant) {
-        self.set(sleep_until(deadline))
+        self.set(sleep_until(deadline).into())
     }
 }

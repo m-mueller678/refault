@@ -8,10 +8,7 @@
 //! At the end of a simulation, all associated simulators will be destroyed.
 //! There is at most one object for each simulator type in a simulation.
 
-use crate::{
-    check_send::{CheckSend, Constraint, SimBound},
-    context::{Context2, executor::NodeId, with_context},
-};
+use crate::context::{Context2, executor::NodeId, with_context};
 use scopeguard::guard;
 use std::{
     any::{Any, TypeId, type_name},
@@ -92,13 +89,13 @@ impl<S: Simulator> Clone for SimulatorHandle<S> {
 /// Get a handle for the simulator
 ///
 /// Panics if no simulator of this type has been added.
-pub fn simulator<S: Simulator>() -> CheckSend<SimulatorHandle<S>, SimBound> {
+pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
     with_context(|cx| {
         if !cx.simulators_by_type.contains_key(&TypeId::of::<S>()) {
             panic!("simulator does not exist: {}", type_name::<S>());
         }
     });
-    SimBound::wrap(SimulatorHandle(PhantomData))
+    SimulatorHandle(PhantomData)
 }
 
 impl<S: Simulator> SimulatorHandle<S> {

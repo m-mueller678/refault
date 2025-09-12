@@ -1,5 +1,4 @@
 use crate::{
-    check_send::{CheckSend, Constraint, NodeBound},
     context::executor::NodeId,
     runtime::Id,
     simulator::{Simulator, SimulatorHandle, simulator},
@@ -112,9 +111,9 @@ pub struct ConNetSocket<T> {
     _p: PhantomData<fn(T) -> T>,
 }
 
-pub type SocketReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<T>, Error>> + Send;
-pub type SendFuture = impl Future<Output = Result<(), Error>> + Send;
-pub type SocketSendFuture = impl Future<Output = Result<(), Error>> + Send;
+pub type SocketReceiveFuture<T: Packet> = impl Future<Output = Result<Addressed<T>, Error>>;
+pub type SendFuture = impl Future<Output = Result<(), Error>>;
+pub type SocketSendFuture = impl Future<Output = Result<(), Error>>;
 
 #[derive(thiserror::Error, Debug)]
 #[error("socket exists for address {addr:?}, type {ty:?}")]
@@ -130,12 +129,12 @@ impl From<AddrInUseError> for Error {
 }
 
 impl<T: Packet> ConNetSocket<T> {
-    pub fn open(port: Id) -> Result<CheckSend<Self, NodeBound>, AddrInUseError> {
+    pub fn open(port: Id) -> Result<Self, AddrInUseError> {
         let addr = Addr {
             port,
             node: NodeId::current(),
         };
-        let simulator = simulator::<ConNet>().unwrap_check_send_sim();
+        let simulator = simulator::<ConNet>();
         let ret =
             simulator.with(
                 |net| match net.receivers.entry((addr, ConstTypeId::of::<T>())) {
@@ -155,7 +154,7 @@ impl<T: Packet> ConNetSocket<T> {
                     }
                 },
             )?;
-        Ok(NodeBound::wrap(ret))
+        Ok(ret)
     }
 
     pub fn local_addr(&self) -> Addr {
@@ -184,13 +183,13 @@ impl<T: Packet> ConNetSocket<T> {
     #[define_opaque(SocketReceiveFuture)]
     pub fn receive(&self) -> SocketReceiveFuture<T> {
         let inbox = self.inbox.clone();
-        NodeBound::wrap(async move {
+        async move {
             inbox
                 .receive()
                 .await
                 .unwrap()
                 .map(|addresesd| addresesd.map(|x| *(x as Box<dyn Any>).downcast().unwrap()))
-        })
+        }
     }
 }
 
@@ -216,7 +215,7 @@ impl ConNet {
     #[define_opaque(SendFuture)]
     pub fn send_wrapped(&mut self, packet: WrappedPacket) -> SendFuture {
         assert!(packet.src.node == NodeId::current());
-        NodeBound::wrap((self.send_function)(packet))
+        (self.send_function)(packet)
     }
 
     pub fn send<T: Packet>(&mut self, src: Addr, dst: Addr, content: T) -> SendFuture {

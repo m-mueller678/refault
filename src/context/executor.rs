@@ -1,4 +1,3 @@
-use crate::check_send::{CheckSend, Constraint, SimBound};
 use crate::event::Event;
 use crate::simulator::for_all_simulators;
 use crate::{
@@ -11,6 +10,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::io;
+use std::marker::PhantomData;
 use std::sync::atomic::Ordering::Relaxed;
 use std::task::Poll;
 use std::{
@@ -165,7 +165,10 @@ impl<T> TaskHandle<T> {
 ///
 /// Dropping this will not abort the task.
 #[derive(Clone)]
-pub struct AbortHandle(CheckSend<Arc<TaskShared>, SimBound>);
+pub struct AbortHandle {
+    shared: Arc<TaskShared>,
+    _unsend: PhantomData<*const u8>,
+}
 
 /// A handle that aborts the associated task when dropped.
 #[derive(Clone)]
@@ -245,11 +248,14 @@ impl Executor {
         };
         let task_handle = TaskHandle {
             result: rcv,
-            abort: AbortHandle(SimBound::wrap(task_entry.shared.clone())),
+            abort: AbortHandle {
+                shared: task_entry.shared.clone(),
+                _unsend: PhantomData,
+            },
         };
         self.tasks.insert(task_id, task_entry);
         self.nodes[node.0].tasks.insert(task_id);
-        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.0);
+        <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.shared);
         task_handle
     }
 
@@ -361,7 +367,7 @@ impl AbortHandle {
     }
 
     fn abort_inner(&self) {
-        let this = &*self.0;
+        let this = &*self.shared;
         (Context2::with_in_node(this.node, |cx| {
             let task = abort_local(
                 this.id,

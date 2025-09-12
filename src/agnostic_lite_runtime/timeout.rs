@@ -2,14 +2,17 @@ use std::{task::Poll, time::Instant};
 
 use agnostic_lite::time::Elapsed;
 
-use crate::time::{Sleep, sleep_until};
+use crate::{
+    send_bind::SimNodeBound,
+    time::{Sleep, sleep_until},
+};
 
 pin_project_lite::pin_project! {
     pub struct Timeout<F> {
         #[pin]
         fut: F,
         #[pin]
-        sleep: Sleep,
+        sleep: SimNodeBound<Sleep>,
     }
 }
 
@@ -31,7 +34,7 @@ impl<F: Future + Send> agnostic_lite::time::AsyncTimeout<F> for Timeout<F> {
     {
         Timeout {
             fut,
-            sleep: sleep_until(deadline),
+            sleep: sleep_until(deadline).into(),
         }
     }
 }
@@ -54,7 +57,7 @@ impl<F: Future> agnostic_lite::time::AsyncLocalTimeout<F> for Timeout<F> {
     {
         Timeout {
             fut,
-            sleep: sleep_until(deadline),
+            sleep: sleep_until(deadline).into(),
         }
     }
 }

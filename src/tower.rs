@@ -12,7 +12,6 @@ use scopeguard::guard;
 use tower::Service;
 
 use crate::{
-    check_send::{CheckSend, Constraint, NodeBound},
     context::executor::AbortGuard,
     packet_network::{Addr, Addressed, ConNet, ConNetSocket, Packet},
     runtime::{Id, spawn},
@@ -32,14 +31,12 @@ enum TowerResponse<R> {
 type TowerResult<B, E> = Result<B, Either<E, std::io::Error>>;
 type ReqWithSender<A, B, E> = (A, oneshot::Sender<TowerResult<B, E>>);
 
-pub struct ClientUnSend<A, B, E> {
+pub struct Client<A, B, E> {
     request_sender: mpsc::Sender<ReqWithSender<A, B, E>>,
     _send_task: AbortGuard,
     _recv_task: AbortGuard,
     _p: PhantomData<*const u8>,
 }
-
-pub struct Client<A, B, E>(pub CheckSend<ClientUnSend<A, B, E>, NodeBound>);
 
 impl<A, B, E: std::fmt::Debug> Service<A> for Client<A, B, E> {
     type Response = B;
@@ -52,14 +49,14 @@ impl<A, B, E: std::fmt::Debug> Service<A> for Client<A, B, E> {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.0.request_sender.poll_ready(cx).map(|x| {
+        self.request_sender.poll_ready(cx).map(|x| {
             x.unwrap();
             Ok(())
         })
     }
 
     fn call(&mut self, req: A) -> Self::Future {
-        let mut sender = self.0.request_sender.clone();
+        let mut sender = self.request_sender.clone();
         async move {
             let (s, r) = oneshot::channel();
             sender
@@ -124,12 +121,12 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
                 }
             }
         });
-        Client(NodeBound::wrap(ClientUnSend {
+        Client {
             request_sender: s,
             _send_task: send_task.abort_handle().abort_on_drop(),
             _recv_task: recv_task.abort_handle().abort_on_drop(),
             _p: PhantomData,
-        }))
+        }
     }
 }
 

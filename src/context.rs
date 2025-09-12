@@ -3,6 +3,7 @@ pub mod id;
 pub mod time;
 
 use crate::event::EventHandler;
+use crate::send_bind::ThreadAnchor;
 use crate::simulator::Simulator;
 use executor::{Executor, ExecutorQueue, NodeId};
 use rand::SeedableRng;
@@ -22,6 +23,7 @@ thread_local! {
         queue:RefCell::new(None),
         pre_next_global_id:Cell::new(0),
         current_node:Cell::new(NodeId::INIT),
+        thread_anchor: Cell::new(None),
     }};
 }
 
@@ -49,12 +51,17 @@ pub struct Context2 {
     pub time: Cell<Option<Duration>>,
     pub queue: RefCell<Option<ExecutorQueue>>,
     current_node: Cell<NodeId>,
+    thread_anchor: Cell<Option<ThreadAnchor>>,
     pre_next_global_id: Cell<u64>,
 }
 
 impl Context2 {
     pub fn with<R>(f: impl FnOnce(&Context2) -> R) -> R {
         CONTEXT.with(f)
+    }
+
+    pub fn thread_anchor(&self) -> Option<ThreadAnchor> {
+        self.thread_anchor.get()
     }
 
     pub fn node_scope<R>(&self, node: NodeId, f: impl FnOnce() -> R) -> R {
@@ -83,6 +90,11 @@ impl ContextInstallGuard {
     pub fn new(event_handler: Box<dyn EventHandler>, seed: u64, start_time: Duration) -> Self {
         Context2::with(|cx2| {
             debug_assert!(cx2.current_node() == NodeId::INIT);
+            assert!(
+                cx2.thread_anchor
+                    .replace(Some(ThreadAnchor::new()))
+                    .is_none()
+            );
             assert!(cx2.time.replace(Some(start_time)).is_none());
             assert!(
                 cx2.rng
