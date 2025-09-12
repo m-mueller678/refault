@@ -5,7 +5,8 @@ use super::Context2;
 /// A unique Id within a simulation.
 ///
 /// The `Default` implementation returns a new id.
-#[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Debug, Hash)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Id(u64);
 
 impl Default for Id {

@@ -27,7 +27,8 @@ impl Packet for () {}
 impl Packet for Never {}
 
 /// An address in the simulated network.
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Addr {
     pub node: NodeId,
     pub port: Id,

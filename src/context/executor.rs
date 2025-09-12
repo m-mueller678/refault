@@ -392,7 +392,8 @@ pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
 }
 
 /// A unique identifier for a node within a simulation.
-#[derive(Eq, Hash, Debug, PartialEq, Clone, Copy)]
+#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NodeId(pub(crate) usize);
 
 impl NodeId {
