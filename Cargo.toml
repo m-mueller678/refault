@@ -2,18 +2,22 @@
 name = "refault"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "deterministic simulation framework for distributed systems using async"
+repository = "https://github.com/m-mueller678/refault"
+keywords = ["deterministic","testing","test-framework","async","distributed-systems"]
+categories = ["development-tools::testing","development-tools::debugging","simulation","virtualization","asynchronous"]
 
 [features]
-# default = ["send-bind"]
-default = ["full"]
-full = ["serde","tower","agnostic-lite"]
+default = ["send-bind"]
+full = ["serde", "tower", "agnostic-lite"]
 serde = ["dep:serde"]
 tower = ["dep:tower"]
 agnostic-lite = ["dep:agnostic-lite", "send-bind"]
 send-bind = []
 
 [dependencies]
-futures = { version = "0.3.31", default-features = false, features = ["std"]}
+futures = { version = "0.3.31", default-features = false, features = ["std"] }
 libc = "1.0.0-alpha.1"
 rand_core = { version = "0.9" }
 rand_chacha = "0.9"
