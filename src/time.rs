@@ -7,7 +7,7 @@
 //! If there are no tasks ready to be run and no tasks waiting on a [Sleep], the simulation ends.
 //!
 //! Within the simulation, the standard library time functions return simulated time.
-//! To control the starting time of the simulation, see [with_simulation_start_time](crate::runtime::Runtime::with_simulation_start_time).
+//! To control the starting time of the simulation, see [with_simulation_start_time](crate::SimBuilder::with_simulation_start_time).
 
 use crate::SimCxl;
 use crate::event::{Event, EventHandler};

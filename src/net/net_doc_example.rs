@@ -1,13 +1,14 @@
 # use refault::{
 #     net::{Addr, Net, Packet, Socket, perfect_connectivity},
-#     runtime::{Id, NodeId, Runtime},
-#     simulator::{add_simulator, simulator},
+#     NodeId, SimBuilder,
+#     id::Id,
+#     simulator::{add_simulator,SimulatorHandle},
 #     time::sleep,
 # };
 # use std::time::Duration;
 # 
 # fn main() {
-#     Runtime::new().run(|| async move {
+#     SimBuilder::new().run(|| async move {
 struct MyPacket(String);
 impl Packet for MyPacket {}
 add_simulator(Net::new(perfect_connectivity(Duration::from_millis(20))));
@@ -30,7 +31,7 @@ addr1.node.spawn(async move {
 
     // sending packets does not require an open socket, only receiving.
     let other_src_port = Id::new();
-    simulator::<Net>()
+    SimulatorHandle::<Net>::get()
         .with(|net| net.send(other_src_port, addr2, MyPacket("pong2".into())))
         .await
         .unwrap();

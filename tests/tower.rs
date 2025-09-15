@@ -3,10 +3,9 @@ use std::time::{Duration, Instant};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use refault::{
-    NodeId,
+    NodeId, SimBuilder,
     id::Id,
     net::{Addr, Net, perfect_connectivity},
-    runtime::Runtime,
     simulator::add_simulator,
     time::sleep,
     tower::{Client, run_server},
@@ -18,7 +17,7 @@ const NET_LATENCY: Duration = Duration::from_millis(20);
 
 #[test]
 fn tower() {
-    Runtime::new().check_determinism(2, || async move {
+    SimBuilder::new().check_determinism(2, || async move {
         add_simulator(Net::new(perfect_connectivity(NET_LATENCY)));
         let server = NodeId::create_node();
         let port = Id::new();

@@ -1,10 +1,10 @@
-use refault::{runtime::Runtime, time::sleep};
+use refault::{SimBuilder, time::sleep};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() {
     // Define custom start time of simulation
     let simulation_start_time = UNIX_EPOCH + Duration::from_secs(3600 * 24);
-    let runtime = Runtime::default().with_simulation_start_time(simulation_start_time);
+    let runtime = SimBuilder::default().with_simulation_start_time(simulation_start_time);
 
     // Retrieve simulated time at different points in the simulation
     runtime.run(move || async move {

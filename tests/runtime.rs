@@ -8,12 +8,12 @@ use refault::NodeId;
 use refault::executor::{TaskHandle, spawn};
 use refault::id::Id;
 use refault::simulator::{Simulator, SimulatorHandle, add_simulator};
-use refault::{runtime::Runtime, time::sleep};
+use refault::{SimBuilder, time::sleep};
 use scopeguard::defer;
 
 #[test]
 fn id_hashmap() {
-    let rt = Runtime::new();
+    let rt = SimBuilder::new();
     rt.check_determinism(2, || async {
         let map: HashMap<_, _> = (0..10).map(|i| (Id::new(), i)).collect();
         for &x in map.values() {
@@ -26,7 +26,7 @@ fn id_hashmap() {
 #[should_panic]
 fn global_state() {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    Runtime::new().check_determinism(2, || async {
+    SimBuilder::new().check_determinism(2, || async {
         sleep(Duration::from_secs(
             1 + COUNTER.fetch_add(1, Relaxed) as u64,
         ))
@@ -37,7 +37,7 @@ fn global_state() {
 #[test]
 #[should_panic]
 fn spawn_on_drop() {
-    Runtime::new().run(|| async {
+    SimBuilder::new().run(|| async {
         defer! {
             spawn(async move{panic!()}).detach();
         }
@@ -50,7 +50,7 @@ impl Simulator for Sim {}
 
 #[test]
 fn simulator_on_drop() {
-    Runtime::new().run(|| async {
+    SimBuilder::new().run(|| async {
         add_simulator(Sim);
         defer! {
             SimulatorHandle::<Sim>::get().with(|_|{})
@@ -61,7 +61,7 @@ fn simulator_on_drop() {
 #[test]
 #[should_panic]
 fn simulator_after_node() {
-    Runtime::new().run(|| async {
+    SimBuilder::new().run(|| async {
         NodeId::create_node();
         add_simulator(Sim);
     })
@@ -70,7 +70,7 @@ fn simulator_after_node() {
 #[test]
 #[should_panic]
 fn simulator_after_stop() {
-    Runtime::new().run(|| async {
+    SimBuilder::new().run(|| async {
         defer! {
             add_simulator(Sim);
         }
@@ -80,7 +80,7 @@ fn simulator_after_stop() {
 
 #[test]
 fn kill_node() {
-    Runtime::new().run(|| async {
+    SimBuilder::new().run(|| async {
         let rc = Rc::new(Cell::new(0));
         let spawn_on_new_node = || {
             let rc2 = rc.clone();
@@ -106,7 +106,7 @@ fn kill_node() {
 
 #[test]
 fn abort_self() {
-    Runtime::new().run(|| async {
+    SimBuilder::new().run(|| async {
         let handle = Rc::new(Cell::new(Option::<TaskHandle<()>>::None));
         let h2 = handle.clone();
         let task = spawn(async move {

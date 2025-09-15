@@ -10,15 +10,15 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// The simulation runtime.
+/// Running simulations.
 ///
-/// A Runtime object is used to configure and start simulations.
-pub struct Runtime {
+/// A SimBUilder object is used to configure and start simulations.
+pub struct SimBuilder {
     seed: u64,
     simulation_start_time: Duration,
 }
 
-impl Default for Runtime {
+impl Default for SimBuilder {
     fn default() -> Self {
         Self {
             seed: 0,
@@ -27,7 +27,7 @@ impl Default for Runtime {
     }
 }
 
-impl Runtime {
+impl SimBuilder {
     /// Construct a new runtime with the default configuration.
     pub fn new() -> Self {
         Self::default()

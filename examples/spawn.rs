@@ -1,8 +1,8 @@
-use refault::{executor::spawn, runtime::Runtime, time::sleep};
+use refault::{SimBuilder, executor::spawn, time::sleep};
 use std::time::Duration;
 
 fn main() {
-    Runtime::default().run(|| async {
+    SimBuilder::default().run(|| async {
         // Spawn multiple futures for simultaneous execution
         let future1 = spawn(calculate_async());
         let future2 = spawn(calculate_async());
