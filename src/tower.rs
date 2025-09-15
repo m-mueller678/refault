@@ -12,8 +12,8 @@ use scopeguard::guard;
 use tower::Service;
 
 use crate::{
-    context::executor::AbortGuard,
-    packet_network::{Addr, Addressed, ConNet, ConNetSocket, Packet},
+    executor::AbortGuard,
+    net::{Addr, Net, Packet, Socket},
     runtime::{Id, spawn},
     simulator::simulator,
 };
@@ -72,18 +72,18 @@ impl<A, B, E: std::fmt::Debug> Service<A> for Client<A, B, E> {
 impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
     pub fn new(remote: Addr) -> Self {
         let (s, mut r) = mpsc::channel(0);
-        let socket = ConNetSocket::<TowerResponse<Result<B, E>>>::open(Id::new()).unwrap();
+        let socket = Socket::<TowerResponse<Result<B, E>>>::open(Id::new()).unwrap();
         let responders = Rc::new(RefCell::new(HashMap::<Id, oneshot::Sender<_>>::new()));
         let responders_2 = responders.clone();
-        let local_addr = socket.local_addr();
+        let local_port = socket.local_port();
         let send_task = spawn(async move {
             let _g = dbg!(guard((), |()| dbg!()));
             loop {
                 // if sender is dropped, this task is aborted
                 let (req, responder) = r.next().await.unwrap();
                 let id = Id::new();
-                match simulator::<ConNet>()
-                    .with(|net| net.send(local_addr, remote, TowerRequest::Start { req, id }))
+                match simulator::<Net>()
+                    .with(|net| net.send(local_port, remote, TowerRequest::Start { req, id }))
                     .await
                 {
                     Ok(()) => {
@@ -98,9 +98,9 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
         let recv_task = spawn(async move {
             loop {
                 match socket.receive().await {
-                    Ok(x) => {
-                        debug_assert!(x.addr == remote);
-                        match x.content {
+                    Ok((response, addr)) => {
+                        debug_assert!(addr == remote);
+                        match response {
                             TowerResponse::Complete { result, id } => {
                                 responders_2
                                     .borrow_mut()
@@ -140,23 +140,19 @@ where
     S::Error: 'static,
     S::Future: 'static,
 {
-    let socket = ConNetSocket::open(port).map_err(|e| Right(e.into()))?;
+    let socket = Socket::<TowerRequest<R>>::open(port).map_err(|e| Right(e.into()))?;
     loop {
-        let request: Addressed<TowerRequest<R>> = socket.receive().await.map_err(Right)?;
+        let (request, address) = socket.receive().await.map_err(Right)?;
         poll_fn(|cx| service.poll_ready(cx)).await.map_err(Left)?;
-        match request.content {
+        match request {
             TowerRequest::Start { req, id } => {
                 let fut = service.call(req);
-                let local_addr = socket.local_addr();
+                let local_port = socket.local_port();
                 spawn(async move {
                     let result = fut.await;
-                    simulator::<ConNet>()
+                    simulator::<Net>()
                         .with(|net| {
-                            net.send(
-                                local_addr,
-                                request.addr,
-                                TowerResponse::Complete { result, id },
-                            )
+                            net.send(local_port, address, TowerResponse::Complete { result, id })
                         })
                         .await
                         .ok();

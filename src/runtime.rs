@@ -1,10 +1,11 @@
 //! Controlling simulations, tasks and nodes.
-use crate::context::executor::Executor;
-pub use crate::context::executor::{AbortHandle, NodeId, TaskHandle, spawn};
-pub use crate::context::id::{Id, IdRange};
-use crate::context::{Context2, ContextInstallGuard};
+use crate::Context2;
+use crate::context_install_guard::ContextInstallGuard;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
+use crate::executor::Executor;
+pub use crate::executor::{AbortGuard, AbortHandle, NodeId, TaskHandle, spawn};
+pub use crate::id::{Id, IdRange};
 use std::panic::resume_unwind;
 use std::sync::Arc;
 use std::thread;

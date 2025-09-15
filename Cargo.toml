@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["send-bind"]
+# default = ["send-bind"]
+default = ["full"]
+full = ["serde","tower","agnostic-lite"]
 serde = ["dep:serde"]
 tower = ["dep:tower"]
 agnostic-lite = ["dep:agnostic-lite", "send-bind"]

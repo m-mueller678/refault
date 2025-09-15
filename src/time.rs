@@ -9,8 +9,8 @@
 //! Within the simulation, the standard library time functions return simulated time.
 //! To control the starting time of the simulation, see [with_simulation_start_time](crate::runtime::Runtime::with_simulation_start_time).
 
-use crate::context::with_context;
 use crate::event::{Event, EventHandler};
+use crate::with_context;
 use pin_arc::{PinRc, PinRcStorage};
 use priority_queue::PriorityQueue;
 use std::cell::Cell;

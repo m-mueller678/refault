@@ -1,10 +1,11 @@
 mod timeout;
 
 use crate::{
-    context::{executor::TaskAborted, with_context},
+    executor::TaskAborted,
     runtime::{TaskHandle, spawn},
     send_bind::{SimBound, SimNodeBound},
     time::{Sleep, sleep, sleep_until},
+    with_context,
 };
 use agnostic_lite::{
     AfterHandle, AsyncAfterSpawner, AsyncBlockingSpawner, AsyncLocalSpawner, AsyncSpawner,

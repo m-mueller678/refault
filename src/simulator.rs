@@ -8,7 +8,7 @@
 //! At the end of a simulation, all associated simulators will be destroyed.
 //! There is at most one object for each simulator type in a simulation.
 
-use crate::context::{Context2, executor::NodeId, with_context};
+use crate::{Context2, executor::NodeId, with_context};
 use scopeguard::guard;
 use std::{
     any::{Any, TypeId, type_name},

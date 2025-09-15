@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::context::Context2;
+use crate::Context2;
 use rand_core::RngCore;
 
 #[unsafe(no_mangle)]

@@ -1,5 +1,5 @@
 pub use crate::send_bind_util::*;
-use crate::{context::Context2, runtime::NodeId};
+use crate::{Context2, runtime::NodeId};
 use scopeguard::guard;
 use std::{
     marker::PhantomData,

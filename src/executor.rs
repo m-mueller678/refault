@@ -1,9 +1,7 @@
 use crate::event::Event;
+use crate::id::Id;
 use crate::simulator::for_all_simulators;
-use crate::{
-    context::time::TimeScheduler,
-    context::{Context2, with_context},
-};
+use crate::{Context2, time::TimeScheduler, with_context};
 use cooked_waker::{IntoWaker, WakeRef};
 use futures::channel::oneshot;
 use std::collections::HashSet;
@@ -20,8 +18,6 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
     task::Context,
 };
-
-use super::id::Id;
 
 pub struct ExecutorQueue {
     ready_queue: VecDeque<Id>,
@@ -58,7 +54,7 @@ pub struct Executor {
     tasks: HashMap<Id, TaskEntry>,
     final_stopped: bool,
     nodes: Vec<NodeData>,
-    pub time_scheduler: TimeScheduler,
+    pub(crate) time_scheduler: TimeScheduler,
 }
 
 enum NodeRunLevel {
@@ -269,7 +265,7 @@ impl Executor {
         debug_assert!(removed);
     }
 
-    pub fn run_current_context(cx2: &Context2) {
+    pub(crate) fn run_current_context(cx2: &Context2) {
         loop {
             let Some(mut task) = cx2.with_cx(|cx| {
                 loop {

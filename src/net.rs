@@ -7,7 +7,7 @@
 //! A SendFunction may be used to customize network behaviour.
 #![doc=concat!("```\n",include_str!("net/net_doc_example.rs"),"```\n`")]
 use crate::{
-    context::executor::NodeId,
+    executor::NodeId,
     runtime::Id,
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
