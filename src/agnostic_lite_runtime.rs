@@ -1,8 +1,7 @@
 mod timeout;
 
 use crate::{
-    executor::TaskAborted,
-    runtime::{TaskHandle, spawn},
+    executor::{TaskAborted, spawn},
     send_bind::{SimBound, SimNodeBound},
     time::{Sleep, sleep, sleep_until},
     with_context,
@@ -150,7 +149,7 @@ impl RuntimeLite for SimRuntime {
 #[derive(Clone, Copy)]
 pub struct Spawner {}
 
-impl<O> JoinHandle<O> for SimBound<TaskHandle<O>> {
+impl<O> JoinHandle<O> for SimBound<crate::executor::TaskHandle<O>> {
     type JoinError = TaskAborted;
 
     fn abort(self) {
@@ -165,7 +164,7 @@ impl<O> JoinHandle<O> for SimBound<TaskHandle<O>> {
     }
 }
 
-impl<O> LocalJoinHandle<O> for SimBound<TaskHandle<O>> {
+impl<O> LocalJoinHandle<O> for SimBound<crate::executor::TaskHandle<O>> {
     type JoinError = TaskAborted;
 
     fn detach(self)
@@ -176,7 +175,7 @@ impl<O> LocalJoinHandle<O> for SimBound<TaskHandle<O>> {
     }
 }
 
-impl<O: Send + 'static> AfterHandle<O> for SimBound<TaskHandle<O>> {
+impl<O: Send + 'static> AfterHandle<O> for SimBound<crate::executor::TaskHandle<O>> {
     type JoinError = TaskAborted;
 
     fn cancel(self) -> impl Future<Output = Option<Result<O, Self::JoinError>>> + Send {
@@ -212,7 +211,7 @@ impl Yielder for Spawner {
 }
 
 impl AsyncSpawner for Spawner {
-    type JoinHandle<O: Send + 'static> = SimBound<TaskHandle<O>>;
+    type JoinHandle<O: Send + 'static> = SimBound<crate::executor::TaskHandle<O>>;
 
     fn spawn<F>(future: F) -> Self::JoinHandle<F::Output>
     where
@@ -224,7 +223,7 @@ impl AsyncSpawner for Spawner {
 }
 
 impl AsyncLocalSpawner for Spawner {
-    type JoinHandle<O: 'static> = SimBound<TaskHandle<O>>;
+    type JoinHandle<O: 'static> = SimBound<crate::executor::TaskHandle<O>>;
 
     fn spawn_local<F>(future: F) -> Self::JoinHandle<F::Output>
     where
@@ -236,7 +235,7 @@ impl AsyncLocalSpawner for Spawner {
 }
 
 impl AsyncBlockingSpawner for Spawner {
-    type JoinHandle<R: Send + 'static> = SimBound<TaskHandle<R>>;
+    type JoinHandle<R: Send + 'static> = SimBound<crate::executor::TaskHandle<R>>;
 
     fn spawn_blocking<F, R>(_f: F) -> Self::JoinHandle<R>
     where
@@ -250,7 +249,7 @@ impl AsyncBlockingSpawner for Spawner {
 impl AsyncAfterSpawner for Spawner {
     type Instant = Instant;
 
-    type JoinHandle<F: Send + 'static> = SimBound<TaskHandle<F>>;
+    type JoinHandle<F: Send + 'static> = SimBound<crate::executor::TaskHandle<F>>;
 
     fn spawn_after<F>(duration: std::time::Duration, future: F) -> Self::JoinHandle<F::Output>
     where

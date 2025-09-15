@@ -1,7 +1,4 @@
-use refault::{
-    runtime::{Runtime, spawn},
-    time::sleep,
-};
+use refault::{executor::spawn, runtime::Runtime, time::sleep};
 use std::time::Duration;
 
 fn main() {

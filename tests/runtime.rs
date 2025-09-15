@@ -4,12 +4,11 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
-use refault::runtime::{NodeId, TaskHandle, spawn};
+use refault::executor::{TaskHandle, spawn};
+use refault::id::Id;
+use refault::node_id::NodeId;
 use refault::simulator::{Simulator, add_simulator, simulator};
-use refault::{
-    runtime::{Id, Runtime},
-    time::sleep,
-};
+use refault::{runtime::Runtime, time::sleep};
 use scopeguard::defer;
 
 #[test]

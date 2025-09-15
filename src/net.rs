@@ -7,8 +7,7 @@
 //! A SendFunction may be used to customize network behaviour.
 #![doc=concat!("```\n",include_str!("net/net_doc_example.rs"),"```\n`")]
 use crate::{
-    executor::NodeId,
-    runtime::Id,
+    node_id::NodeId,
     simulator::{Simulator, SimulatorHandle, simulator},
     time::sleep_until,
 };
@@ -116,8 +115,8 @@ impl OrderingKey {
 #[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Addr {
-    pub node: NodeId,
-    pub port: Id,
+    pub node: crate::node_id::NodeId,
+    pub port: crate::id::Id,
 }
 
 /// The function that is invoked to send a packet.
@@ -288,7 +287,7 @@ impl<T: Packet> Socket<T> {
     ///
     /// The socket will receive packets of type `T` that are addressed to this node and port.
     /// Returns an error if there is already a socket with this address.
-    pub fn open(port: Id) -> Result<Self, AddrInUseError> {
+    pub fn open(port: crate::id::Id) -> Result<Self, AddrInUseError> {
         let addr = Addr {
             port,
             node: NodeId::current(),
@@ -317,7 +316,7 @@ impl<T: Packet> Socket<T> {
     }
 
     /// Returns the port this node is bound to.
-    pub fn local_port(&self) -> Id {
+    pub fn local_port(&self) -> crate::id::Id {
         self.local_addr.port
     }
 
@@ -386,7 +385,7 @@ impl Net {
     /// Invokes the [SendFuntion] the network was created with.
     /// This will usually cause the socket with the specified address to receive that packet.
     /// If there is no socket listening on the destination address, or its buffer is full, the packet will be dropped.
-    pub fn send<T: Packet>(&mut self, src_port: Id, dst: Addr, packet: T) -> SendFuture {
+    pub fn send<T: Packet>(&mut self, src_port: crate::id::Id, dst: Addr, packet: T) -> SendFuture {
         self.send_wrapped(PacketRc::new(
             Addr {
                 port: src_port,

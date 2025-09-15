@@ -3,8 +3,10 @@ use std::time::{Duration, Instant};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use refault::{
+    id::Id,
     net::{Addr, Net, perfect_connectivity},
-    runtime::{Id, NodeId, Runtime},
+    node_id::NodeId,
+    runtime::Runtime,
     simulator::add_simulator,
     time::sleep,
     tower::{Client, run_server},

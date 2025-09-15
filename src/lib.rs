@@ -6,7 +6,8 @@
 
 use crate::{
     event::EventHandler,
-    executor::{Executor, ExecutorQueue, NodeId},
+    executor::{Executor, ExecutorQueue},
+    node_id::NodeId,
     send_bind::ThreadAnchor,
     simulator::Simulator,
 };
@@ -73,7 +74,7 @@ struct Context2 {
     rng: RefCell<Option<ChaCha12Rng>>,
     time: Cell<Option<Duration>>,
     queue: RefCell<Option<ExecutorQueue>>,
-    current_node: Cell<NodeId>,
+    current_node: Cell<crate::node_id::NodeId>,
     thread_anchor: Cell<Option<ThreadAnchor>>,
     pre_next_global_id: Cell<u64>,
 }
@@ -91,18 +92,18 @@ impl Context2 {
         self.thread_anchor.get()
     }
 
-    pub fn node_scope<R>(&self, node: NodeId, f: impl FnOnce() -> R) -> R {
+    pub fn node_scope<R>(&self, node: crate::node_id::NodeId, f: impl FnOnce() -> R) -> R {
         let calling_node = self.current_node.get();
         self.current_node.set(node);
         let _guard = guard((), |()| self.current_node.set(calling_node));
         f()
     }
 
-    pub fn with_in_node<R>(node: NodeId, f: impl FnOnce(&Context2) -> R) -> R {
+    pub fn with_in_node<R>(node: crate::node_id::NodeId, f: impl FnOnce(&Context2) -> R) -> R {
         Self::with(|cx| cx.node_scope(node, || f(cx)))
     }
 
-    pub fn current_node(&self) -> NodeId {
+    pub fn current_node(&self) -> crate::node_id::NodeId {
         self.current_node.get()
     }
 

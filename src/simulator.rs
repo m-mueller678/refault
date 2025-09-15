@@ -8,7 +8,7 @@
 //! At the end of a simulation, all associated simulators will be destroyed.
 //! There is at most one object for each simulator type in a simulation.
 
-use crate::{Context2, executor::NodeId, with_context};
+use crate::{Context2, node_id::NodeId, with_context};
 use scopeguard::guard;
 use std::{
     any::{Any, TypeId, type_name},
@@ -112,7 +112,7 @@ impl<S: NodeSimulator> SimulatorHandle<PerNode<S>> {
     /// Call `f` with a mutable reference to the node simulator of the specified node.
     ///
     /// See [Self::with] for concerns about locking.
-    pub fn with_node<R>(&self, node: NodeId, f: impl FnOnce(&mut S) -> R) -> R {
+    pub fn with_node<R>(&self, node: crate::node_id::NodeId, f: impl FnOnce(&mut S) -> R) -> R {
         self.with(|s| f(&mut s.simulators[node.to_index()]))
     }
 
@@ -169,16 +169,16 @@ pub struct PerNode<S> {
     new: Box<dyn FnMut() -> S>,
 }
 
-impl<S> std::ops::Index<NodeId> for PerNode<S> {
+impl<S> std::ops::Index<crate::node_id::NodeId> for PerNode<S> {
     type Output = S;
 
-    fn index(&self, index: NodeId) -> &Self::Output {
+    fn index(&self, index: crate::node_id::NodeId) -> &Self::Output {
         &self.simulators[index.to_index()]
     }
 }
 
-impl<S> std::ops::IndexMut<NodeId> for PerNode<S> {
-    fn index_mut(&mut self, index: NodeId) -> &mut Self::Output {
+impl<S> std::ops::IndexMut<crate::node_id::NodeId> for PerNode<S> {
+    fn index_mut(&mut self, index: crate::node_id::NodeId) -> &mut Self::Output {
         &mut self.simulators[index.to_index()]
     }
 }

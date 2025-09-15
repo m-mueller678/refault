@@ -1,5 +1,5 @@
 pub use crate::send_bind_util::*;
-use crate::{Context2, runtime::NodeId};
+use crate::{Context2, node_id::NodeId};
 use scopeguard::guard;
 use std::{
     marker::PhantomData,
@@ -13,7 +13,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct NodeBound<T> {
-    node: NodeId,
+    node: crate::node_id::NodeId,
     inner: ManuallyDrop<T>,
 }
 

@@ -1,5 +1,6 @@
 use crate::event::Event;
 use crate::id::Id;
+use crate::node_id::NodeId;
 use crate::simulator::for_all_simulators;
 use crate::{Context2, time::TimeScheduler, with_context};
 use cooked_waker::{IntoWaker, WakeRef};
@@ -185,7 +186,7 @@ const TASK_END: usize = 4;
 struct TaskShared {
     state: AtomicUsize,
     id: Id,
-    node: NodeId,
+    node: crate::node_id::NodeId,
 }
 
 impl WakeRef for TaskShared {
@@ -209,7 +210,10 @@ impl WakeRef for TaskShared {
 ///
 /// This is a low level interface, that can be misused to unintentionally send data between nodes.
 /// Prefer using [NodeId::spawn] or [spawn] instead.
-pub fn spawn_task_on_node<F: Future + 'static>(node: NodeId, future: F) -> TaskHandle<F::Output> {
+pub fn spawn_task_on_node<F: Future + 'static>(
+    node: crate::node_id::NodeId,
+    future: F,
+) -> TaskHandle<F::Output> {
     with_context(|cx| {
         cx.event_handler.handle_event(Event::TaskSpawned);
         cx.executor.spawn(node, future)
@@ -231,7 +235,7 @@ impl Executor {
         }
     }
 
-    pub fn push_new_node(&mut self) -> NodeId {
+    pub fn push_new_node(&mut self) -> crate::node_id::NodeId {
         let id = NodeId::from_index(self.node_count());
         assert!(!self.final_stopped, "node spawn during simulation shutdown");
         self.nodes.push(NodeData {
@@ -241,7 +245,7 @@ impl Executor {
         id
     }
 
-    pub fn stop_node(node: NodeId, is_final: bool) {
+    pub fn stop_node(node: crate::node_id::NodeId, is_final: bool) {
         Context2::with_in_node(node, |cx2| {
             let was_running = cx2.with_cx(|cx| {
                 let node = &mut cx.executor.nodes[node.to_index()];
@@ -284,7 +288,11 @@ impl Executor {
         });
     }
 
-    fn spawn<F: Future + 'static>(&mut self, node: NodeId, future: F) -> TaskHandle<F::Output> {
+    fn spawn<F: Future + 'static>(
+        &mut self,
+        node: crate::node_id::NodeId,
+        future: F,
+    ) -> TaskHandle<F::Output> {
         match self.nodes[node.0.get() - 1].run_level {
             NodeRunLevel::Running => (),
             NodeRunLevel::Stopped | NodeRunLevel::FinalStopped => {
@@ -456,6 +464,3 @@ impl<T> Future for TaskHandle<T> {
 pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
     spawn_task_on_node(NodeId::current(), future)
 }
-
-// TODO inline
-pub type NodeId = crate::node_id::NodeId;

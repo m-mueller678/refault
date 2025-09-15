@@ -4,19 +4,12 @@ use crate::context_install_guard::ContextInstallGuard;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::Executor;
+use crate::node_id::NodeId;
 use std::panic::resume_unwind;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// TODO remove
-pub use crate::executor::spawn;
-pub type AbortGuard = crate::executor::AbortGuard;
-pub type AbortHandle = crate::executor::AbortHandle;
-pub type NodeId = crate::executor::NodeId;
-pub type TaskHandle<T> = crate::executor::TaskHandle<T>;
-pub type Id = crate::id::Id;
-pub type IdRange = crate::id::IdRange;
 /// The simulation runtime.
 ///
 /// A Runtime object is used to configure and start simulations.

@@ -1,7 +1,8 @@
 use crate::{
-    CONTEXT, Context, Context2, NodeId,
+    CONTEXT, Context, Context2,
     event::EventHandler,
     executor::{Executor, ExecutorQueue},
+    node_id::NodeId,
     send_bind::ThreadAnchor,
 };
 use rand_chacha::ChaCha12Rng;

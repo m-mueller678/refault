@@ -12,20 +12,20 @@ use scopeguard::guard;
 use tower::Service;
 
 use crate::{
-    executor::AbortGuard,
+    executor::{AbortGuard, spawn},
+    id::Id,
     net::{Addr, Net, Packet, Socket},
-    runtime::{Id, spawn},
     simulator::simulator,
 };
 
 impl<R: 'static> Packet for TowerRequest<R> {}
 enum TowerRequest<R> {
-    Start { req: R, id: Id },
+    Start { req: R, id: crate::id::Id },
 }
 
 impl<R: 'static> Packet for TowerResponse<R> {}
 enum TowerResponse<R> {
-    Complete { result: R, id: Id },
+    Complete { result: R, id: crate::id::Id },
 }
 
 type TowerResult<B, E> = Result<B, Either<E, std::io::Error>>;
@@ -73,7 +73,9 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
     pub fn new(remote: Addr) -> Self {
         let (s, mut r) = mpsc::channel(0);
         let socket = Socket::<TowerResponse<Result<B, E>>>::open(Id::new()).unwrap();
-        let responders = Rc::new(RefCell::new(HashMap::<Id, oneshot::Sender<_>>::new()));
+        let responders = Rc::new(RefCell::new(
+            HashMap::<crate::id::Id, oneshot::Sender<_>>::new(),
+        ));
         let responders_2 = responders.clone();
         let local_port = socket.local_port();
         let send_task = spawn(async move {
@@ -131,7 +133,7 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
 }
 
 pub async fn run_server<R, S: Service<R>>(
-    port: Id,
+    port: crate::id::Id,
     mut service: S,
 ) -> Result<(), Either<S::Error, std::io::Error>>
 where
