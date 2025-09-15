@@ -1,11 +1,10 @@
 use std::num::NonZeroUsize;
 
 use crate::{
-    Context2,
+    SimCx, SimCxl,
     event::Event,
     executor::{spawn_task_on_node, stop_node},
     simulator::for_all_simulators,
-    with_context,
 };
 
 /// A unique identifier for a node within a simulation.
@@ -20,14 +19,14 @@ impl NodeId {
     ///
     /// Can only be called from within a simulation.
     pub fn create_node() -> NodeId {
-        Context2::with(|cx2| {
-            let id = cx2.with_cx(|cx| {
-                let id = cx.executor.push_new_node();
-                cx.event_handler.handle_event(Event::NodeSpawned(id));
+        SimCx::with(|cx| {
+            let id = cx.with_cx(|cxl| {
+                let id = cxl.executor.push_new_node();
+                cxl.event_handler.handle_event(Event::NodeSpawned(id));
                 id
             });
-            cx2.node_scope(id, || {
-                for_all_simulators(cx2, true, |s| {
+            cx.node_scope(id, || {
+                for_all_simulators(cx, true, |s| {
                     s.create_node();
                 });
             });
@@ -44,7 +43,7 @@ impl NodeId {
     ///
     /// Can only be called from within a simulation.
     pub fn current() -> Self {
-        Context2::with(|cx2| cx2.current_node())
+        SimCx::with(|cx| cx.current_node())
     }
 
     /// Invoke Simulator::stop on all simulators and stop all tasks on this node.
@@ -59,7 +58,7 @@ impl NodeId {
     ///
     /// If new nodes are added while this iterator exists, panics may occur or they may or may not be returned.
     pub fn all() -> impl Iterator<Item = NodeId> {
-        (0..with_context(|cx| cx.executor.node_count())).map(NodeId::from_index)
+        (0..SimCxl::with(|cx| cx.executor.node_count())).map(NodeId::from_index)
     }
 
     pub(crate) const fn from_index(index: usize) -> Self {

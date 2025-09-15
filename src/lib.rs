@@ -38,38 +38,20 @@ pub mod time;
 #[cfg(feature = "tower")]
 pub mod tower;
 
-thread_local! {
-    static CONTEXT: Context2 = const {Context2{
-        context:RefCell::new(None),
-        queue:RefCell::new(None),
-        cx3:OnceCell::new(),
-    }};
+struct SimCx {
+    context: RefCell<Option<SimCxl>>,
+    queue: RefCell<Option<ExecutorQueue>>,
+    once_cell: OnceCell<SimCxu>,
 }
 
-fn with_context_option<R>(f: impl FnOnce(&mut Option<Context>) -> R) -> R {
-    Context2::with(|c| f(&mut c.context.borrow_mut()))
-}
-
-fn with_context<R>(f: impl FnOnce(&mut Context) -> R) -> R {
-    with_context_option(|cx| f(cx.as_mut().expect("no context set")))
-}
-
-type SimulatorRc = Option<Box<dyn Simulator>>;
-
-struct Context {
+struct SimCxl {
     executor: Executor,
     event_handler: Box<dyn EventHandler>,
     simulators_by_type: HashMap<TypeId, usize>,
-    simulators: Vec<SimulatorRc>,
+    simulators: Vec<Option<Box<dyn Simulator>>>,
 }
 
-struct Context2 {
-    context: RefCell<Option<Context>>,
-    queue: RefCell<Option<ExecutorQueue>>,
-    cx3: OnceCell<Context3>,
-}
-
-struct Context3 {
+struct SimCxu {
     current_node: Cell<crate::node_id::NodeId>,
     thread_anchor: ThreadAnchor,
     pre_next_global_id: Cell<u64>,
@@ -77,34 +59,49 @@ struct Context3 {
     rng: RefCell<ChaCha12Rng>,
 }
 
+/// Returns true if called from within a simulation.
 pub fn is_in_simulation() -> bool {
-    Context2::with(|cx| cx.cx3.get().is_some())
+    SimCx::with(|cx| cx.once_cell.get().is_some())
 }
 
-impl Context2 {
-    pub fn with<R>(f: impl FnOnce(&Context2) -> R) -> R {
+impl SimCx {
+    pub fn with<R>(f: impl FnOnce(&SimCx) -> R) -> R {
+        thread_local! {
+            static CONTEXT: SimCx = const {SimCx{
+                context:RefCell::new(None),
+                queue:RefCell::new(None),
+                once_cell:OnceCell::new(),
+            }};
+        }
+
         CONTEXT.with(f)
     }
 
-    fn cx3(&self) -> &Context3 {
-        self.cx3.get().unwrap()
+    fn cxu(&self) -> &SimCxu {
+        self.once_cell.get().unwrap()
     }
     fn current_node(&self) -> crate::node_id::NodeId {
-        self.cx3().current_node.get()
+        self.cxu().current_node.get()
     }
     fn node_scope<R>(&self, node: crate::node_id::NodeId, f: impl FnOnce() -> R) -> R {
-        let cx3 = self.cx3();
+        let cx3 = self.cxu();
         let calling_node = cx3.current_node.get();
         cx3.current_node.set(node);
         let _guard = guard((), |()| cx3.current_node.set(calling_node));
         f()
     }
 
-    fn with_in_node<R>(node: crate::node_id::NodeId, f: impl FnOnce(&Context2) -> R) -> R {
+    fn with_in_node<R>(node: crate::node_id::NodeId, f: impl FnOnce(&SimCx) -> R) -> R {
         Self::with(|cx| cx.node_scope(node, || f(cx)))
     }
 
-    fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
+    fn with_cx<R>(&self, f: impl FnOnce(&mut SimCxl) -> R) -> R {
         f(self.context.borrow_mut().as_mut().unwrap())
+    }
+}
+
+impl SimCxl {
+    pub fn with<R>(f: impl FnOnce(&mut SimCxl) -> R) -> R {
+        SimCx::with(|cx| f(cx.context.borrow_mut().as_mut().unwrap()))
     }
 }

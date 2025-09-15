@@ -1,8 +1,9 @@
+use crate::SimCxl;
 use crate::event::Event;
 use crate::id::Id;
 use crate::node_id::NodeId;
 use crate::simulator::for_all_simulators;
-use crate::{Context2, time::TimeScheduler, with_context};
+use crate::{SimCx, time::TimeScheduler};
 use cooked_waker::{IntoWaker, WakeRef};
 use futures::channel::oneshot;
 use std::collections::HashSet;
@@ -191,7 +192,7 @@ struct TaskShared {
 
 impl WakeRef for TaskShared {
     fn wake_by_ref(&self) {
-        Context2::with(|cx| {
+        SimCx::with(|cx| {
             let mut ex = cx.queue.borrow_mut();
             let ex = ex.as_mut().unwrap();
             match self.state.load(Relaxed) {
@@ -214,7 +215,7 @@ pub fn spawn_task_on_node<F: Future + 'static>(
     node: crate::node_id::NodeId,
     future: F,
 ) -> TaskHandle<F::Output> {
-    with_context(|cx| {
+    SimCxl::with(|cx| {
         cx.event_handler.handle_event(Event::TaskSpawned);
         cx.executor.spawn(node, future)
     })
@@ -229,7 +230,7 @@ impl Executor {
     }
 
     pub fn final_stop() {
-        with_context(|cx| cx.executor.final_stopped = true);
+        SimCxl::with(|cx| cx.executor.final_stopped = true);
         for node in NodeId::all() {
             stop_node(node, true);
         }
@@ -294,39 +295,39 @@ impl Executor {
         debug_assert!(removed);
     }
 
-    pub(crate) fn run_current_context(cx2: &Context2) {
+    pub(crate) fn run_current_context(cx: &SimCx) {
         loop {
-            let Some(mut task) = cx2.with_cx(|cx| {
+            let Some(mut task) = cx.with_cx(|cxl| {
                 loop {
-                    let task_id = cx2
+                    let task_id = cx
                         .queue
                         .borrow_mut()
                         .as_mut()
                         .unwrap()
                         .ready_queue
                         .pop_front()?;
-                    let task_entry = cx.executor.tasks.get_mut(&task_id).unwrap();
+                    let task_entry = cxl.executor.tasks.get_mut(&task_id).unwrap();
                     match task_entry.shared.state.load(Relaxed) {
                         TASK_READY => {
                             let task = task_entry.task.take().unwrap();
-                            cx.event_handler
+                            cxl.event_handler
                                 .handle_event(Event::TaskRun(task_entry.shared.id));
                             task_entry.shared.state.store(TASK_WAITING, Relaxed);
                             return Some(task);
                         }
                         TASK_CANCELLED => {
                             let id = task_entry.shared.id;
-                            cx.executor.remove_task_entry(id);
+                            cxl.executor.remove_task_entry(id);
                             continue;
                         }
                         TASK_COMPLETE | TASK_WAITING | TASK_END.. => unreachable!(),
                     }
                 }
             }) else {
-                if cx2.with_cx(|cx| {
-                    cx.executor
+                if cx.with_cx(|cxl| {
+                    cxl.executor
                         .time_scheduler
-                        .wait_until_next_future_ready(&cx2.cx3().time, &mut *cx.event_handler)
+                        .wait_until_next_future_ready(&cx.cxu().time, &mut *cxl.event_handler)
                 }) {
                     continue;
                 } else {
@@ -334,9 +335,9 @@ impl Executor {
                 }
             };
             let &TaskShared { node, id, .. } = &**task.as_base();
-            cx2.node_scope(node, move || {
+            cx.node_scope(node, move || {
                 let keep = task.as_mut().run();
-                cx2.with_cx(|cx| {
+                cx.with_cx(|cx| {
                     if keep {
                         match task.as_base().state.load(Relaxed) {
                             TASK_COMPLETE | TASK_END.. => unreachable!(),
@@ -393,7 +394,7 @@ impl AbortHandle {
 
     fn abort_inner(&self) {
         let this = &*self.shared;
-        (Context2::with_in_node(this.node, |cx| {
+        (SimCx::with_in_node(this.node, |cx| {
             let task = abort_local(
                 this.id,
                 cx.queue.borrow_mut().as_mut().unwrap(),
@@ -423,9 +424,9 @@ pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
 }
 
 pub fn stop_node(node: NodeId, is_final: bool) {
-    Context2::with_in_node(node, |cx2| {
-        let was_running = cx2.with_cx(|cx| {
-            let node = &mut cx.executor.nodes[node.to_index()];
+    SimCx::with_in_node(node, |cx| {
+        let was_running = cx.with_cx(|cxl| {
+            let node = &mut cxl.executor.nodes[node.to_index()];
             match node.run_level {
                 NodeRunLevel::Running => {
                     node.run_level = if is_final {
@@ -447,20 +448,20 @@ pub fn stop_node(node: NodeId, is_final: bool) {
             return;
         }
         let task_ids = {
-            cx2.with_cx(|context| {
+            cx.with_cx(|context| {
                 let node = &mut context.executor.nodes[node.to_index()];
                 node.tasks.iter().copied().collect::<Vec<Id>>()
             })
         };
         for &task in &task_ids {
-            drop(cx2.with_cx(|cx| {
+            drop(cx.with_cx(|cxl| {
                 abort_local(
                     task,
-                    cx2.queue.borrow_mut().as_mut().unwrap(),
-                    &mut cx.executor.tasks,
+                    cx.queue.borrow_mut().as_mut().unwrap(),
+                    &mut cxl.executor.tasks,
                 )
             }))
         }
-        for_all_simulators(cx2, false, |x| x.stop_node());
+        for_all_simulators(cx, false, |x| x.stop_node());
     });
 }

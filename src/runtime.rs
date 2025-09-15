@@ -1,5 +1,5 @@
 //! Controlling simulations, tasks and nodes.
-use crate::Context2;
+use crate::SimCx;
 use crate::context_install_guard::ContextInstallGuard;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
@@ -101,8 +101,8 @@ impl Runtime {
                         self.simulation_start_time,
                     );
                     init_fn();
-                    Context2::with(|cx2| {
-                        Executor::run_current_context(cx2);
+                    SimCx::with(|cx| {
+                        Executor::run_current_context(cx);
                     });
                     context_guard.destroy().unwrap().finalize()
                 })

@@ -9,8 +9,8 @@
 //! Within the simulation, the standard library time functions return simulated time.
 //! To control the starting time of the simulation, see [with_simulation_start_time](crate::runtime::Runtime::with_simulation_start_time).
 
+use crate::SimCxl;
 use crate::event::{Event, EventHandler};
-use crate::with_context;
 use pin_arc::{PinRc, PinRcStorage};
 use priority_queue::PriorityQueue;
 use std::cell::Cell;
@@ -30,7 +30,7 @@ pin_project_lite::pin_project! {
 
     impl PinnedDrop for Sleep {
         fn drop(this: Pin<&mut Self>) {
-            with_context(|cx| {
+            SimCxl::with(|cx| {
                 cx.executor
                     .time_scheduler
                     .upcoming_events
@@ -61,7 +61,7 @@ impl Future for Sleep {
         let state_storage = self.project().state;
         let state = state_storage.as_ref();
         match state.replace(TimeFutureState::Taken) {
-            TimeFutureState::Init(instant) => with_context(|cx| {
+            TimeFutureState::Init(instant) => SimCxl::with(|cx| {
                 if cx.executor.time_scheduler.now >= instant {
                     Poll::Ready(instant)
                 } else {

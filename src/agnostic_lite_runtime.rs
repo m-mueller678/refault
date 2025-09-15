@@ -1,10 +1,10 @@
 mod timeout;
 
 use crate::{
+    SimCx,
     executor::{TaskAborted, spawn},
     send_bind::{SimBound, SimNodeBound},
     time::{Sleep, sleep, sleep_until},
-    with_context,
 };
 use agnostic_lite::{
     AfterHandle, AsyncAfterSpawner, AsyncBlockingSpawner, AsyncLocalSpawner, AsyncSpawner,
@@ -34,7 +34,9 @@ impl RuntimeLite for SimRuntime {
     type LocalTimeout<F: Future> = Timeout<F>;
 
     fn new() -> Self {
-        with_context(|_| {});
+        SimCx::with(|cx| {
+            cx.cxu();
+        });
         SimRuntime
     }
 

@@ -1,5 +1,5 @@
 pub use crate::send_bind_util::*;
-use crate::{Context2, node_id::NodeId};
+use crate::{SimCx, node_id::NodeId};
 use scopeguard::guard;
 use std::{
     marker::PhantomData,
@@ -68,7 +68,7 @@ impl<T> Drop for SimBound<T> {
 }
 impl<T> SimBound<T> {
     fn current_anchor() -> NonZeroU64 {
-        Context2::with(|cx| cx.cx3().thread_anchor.id)
+        SimCx::with(|cx| cx.cxu().thread_anchor.id)
     }
 
     pub fn unwrap_sim_bound(mut self) -> T {

@@ -8,7 +8,7 @@
 //! At the end of a simulation, all associated simulators will be destroyed.
 //! There is at most one object for each simulator type in a simulation.
 
-use crate::{Context2, node_id::NodeId, with_context};
+use crate::{SimCx, SimCxl, node_id::NodeId};
 use scopeguard::guard;
 use std::{
     any::{Any, TypeId, type_name},
@@ -45,7 +45,7 @@ pub trait Simulator: Any {
 /// - The simulation is shutting down.
 pub fn add_simulator<S: Simulator>(simulator: S) {
     let simulator = Some(Box::new(simulator) as Box<_>);
-    with_context(|cx| {
+    SimCxl::with(|cx| {
         assert!(cx.executor.node_count() == 1 && !cx.executor.is_final_sopping());
         assert!(
             cx.simulators_by_type
@@ -58,7 +58,7 @@ pub fn add_simulator<S: Simulator>(simulator: S) {
 
 /// Call `f` with a mutable reference to the simulator if it exists or `None` otherwise.
 fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -> R {
-    if let Some((index, simulator)) = with_context(|cx| {
+    if let Some((index, simulator)) = SimCxl::with(|cx| {
         let index = *cx.simulators_by_type.get(&TypeId::of::<S>())?;
 
         let simulator = cx.simulators[index]
@@ -67,7 +67,7 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
         Some((index, simulator))
     }) {
         let mut simulator = guard(simulator, |simulator| {
-            with_context(|cx| {
+            SimCxl::with(|cx| {
                 assert!(cx.simulators[index].replace(simulator).is_none());
             });
         });
@@ -90,7 +90,7 @@ impl<S: Simulator> Clone for SimulatorHandle<S> {
 ///
 /// Panics if no simulator of this type has been added.
 pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
-    with_context(|cx| {
+    SimCxl::with(|cx| {
         if !cx.simulators_by_type.contains_key(&TypeId::of::<S>()) {
             panic!("simulator does not exist: {}", type_name::<S>());
         }
@@ -124,18 +124,14 @@ impl<S: NodeSimulator> SimulatorHandle<PerNode<S>> {
     }
 }
 
-pub(crate) fn for_all_simulators(
-    cx2: &Context2,
-    forward: bool,
-    mut f: impl FnMut(&mut dyn Simulator),
-) {
-    let len = cx2.with_cx(|cx| cx.simulators.len());
+pub(crate) fn for_all_simulators(cx: &SimCx, forward: bool, mut f: impl FnMut(&mut dyn Simulator)) {
+    let len = cx.with_cx(|cx| cx.simulators.len());
     let mut simulator = None;
     for i in 0..len {
         let index = if forward { i } else { len - 1 - i };
         let swap = |s: &mut Option<_>| {
             mem::swap(
-                &mut cx2.context.borrow_mut().as_mut().unwrap().simulators[index],
+                &mut cx.context.borrow_mut().as_mut().unwrap().simulators[index],
                 s,
             )
         };
@@ -146,7 +142,7 @@ pub(crate) fn for_all_simulators(
         swap(&mut simulator);
     }
     assert_eq!(
-        cx2.context.borrow_mut().as_mut().unwrap().simulators.len(),
+        cx.context.borrow_mut().as_mut().unwrap().simulators.len(),
         len
     );
 }

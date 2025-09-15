@@ -1,12 +1,12 @@
 use std::sync::LazyLock;
 
-use crate::Context2;
+use crate::SimCx;
 use rand_core::RngCore;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isize {
-    Context2::with(|cx| {
-        if let Some(cx3) = cx.cx3.get() {
+    SimCx::with(|cx| {
+        if let Some(cx3) = cx.once_cell.get() {
             let mut rng = cx3.rng.borrow_mut();
             unsafe {
                 // ensure memory is initialized. Hopefully this is optimized out.
@@ -33,8 +33,8 @@ unsafe extern "C" fn clock_gettime(
     _clockid: libc::clockid_t,
     tp: *mut libc::timespec,
 ) -> libc::c_int {
-    Context2::with(|cx| {
-        if let Some(cx3) = cx.cx3.get() {
+    SimCx::with(|cx| {
+        if let Some(cx3) = cx.once_cell.get() {
             let time = cx3.time.get();
             unsafe {
                 tp.write(libc::timespec {

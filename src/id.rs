@@ -1,6 +1,6 @@
 use std::{num::NonZeroU64, ops::RangeInclusive};
 
-use super::Context2;
+use super::SimCx;
 
 /// A unique Id within a simulation.
 ///
@@ -17,8 +17,8 @@ impl Default for Id {
 
 impl Id {
     pub fn new() -> Self {
-        Context2::with(|cx| {
-            let cx = cx.cx3();
+        SimCx::with(|cx| {
+            let cx = cx.cxu();
             let id = cx.pre_next_global_id.get() + 1;
             cx.pre_next_global_id.set(id);
             Id(NonZeroU64::new(id).unwrap())
@@ -31,8 +31,8 @@ pub struct IdRange(RangeInclusive<NonZeroU64>);
 impl IdRange {
     pub fn new(len: usize) -> Self {
         assert!(len > 0);
-        Context2::with(|cx| {
-            let cx = cx.cx3();
+        SimCx::with(|cx| {
+            let cx = cx.cxu();
             let last = cx.pre_next_global_id.get() + len as u64;
             cx.pre_next_global_id.set(last);
             let first = last - (len as u64 - 1);
