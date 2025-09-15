@@ -27,6 +27,7 @@ pub mod executor;
 pub mod id;
 mod interception;
 pub mod net;
+pub mod node_id;
 pub mod runtime;
 #[cfg(feature = "send-bind")]
 pub mod send_bind;
@@ -40,9 +41,10 @@ pub mod tower;
 thread_local! {
     static CONTEXT: Context2 = const {Context2{
         context:RefCell::new(None),
-        rng:RefCell::new(None),
-        time:Cell::new(None),
         queue:RefCell::new(None),
+        rng:RefCell::new(None),
+
+        time:Cell::new(None),
         pre_next_global_id:Cell::new(0),
         current_node:Cell::new(NodeId::INIT),
         thread_anchor: Cell::new(None),

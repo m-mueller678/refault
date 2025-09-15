@@ -34,7 +34,7 @@ impl ExecutorQueue {
         }
     }
 
-    pub fn executor(&self) -> Executor {
+    pub(crate) fn executor(&self) -> Executor {
         Executor {
             final_stopped: false,
             tasks: HashMap::new(),
@@ -47,7 +47,7 @@ impl ExecutorQueue {
     }
 }
 
-pub struct Executor {
+pub(crate) struct Executor {
     // each entry corresponds to one TaskShared
     // entries are None while the task is executing, cancelled, or completed
     #[allow(clippy::type_complexity)]
@@ -205,6 +205,17 @@ impl WakeRef for TaskShared {
     }
 }
 
+/// Spawn a task on the given node and return a handle.
+///
+/// This is a low level interface, that can be misused to unintentionally send data between nodes.
+/// Prefer using [NodeId::spawn] or [spawn] instead.
+pub fn spawn_task_on_node<F: Future + 'static>(node: NodeId, future: F) -> TaskHandle<F::Output> {
+    with_context(|cx| {
+        cx.event_handler.handle_event(Event::TaskSpawned);
+        cx.executor.spawn(node, future)
+    })
+}
+
 impl Executor {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
@@ -215,13 +226,66 @@ impl Executor {
 
     pub fn final_stop() {
         with_context(|cx| cx.executor.final_stopped = true);
-        for n in NodeId::all() {
-            n.stop_inner(true);
+        for node in NodeId::all() {
+            Self::stop_node(node, true);
         }
     }
 
+    pub fn push_new_node(&mut self) -> NodeId {
+        let id = NodeId::from_index(self.node_count());
+        assert!(!self.final_stopped, "node spawn during simulation shutdown");
+        self.nodes.push(NodeData {
+            run_level: NodeRunLevel::Running,
+            tasks: HashSet::new(),
+        });
+        id
+    }
+
+    pub fn stop_node(node: NodeId, is_final: bool) {
+        Context2::with_in_node(node, |cx2| {
+            let was_running = cx2.with_cx(|cx| {
+                let node = &mut cx.executor.nodes[node.to_index()];
+                match node.run_level {
+                    NodeRunLevel::Running => {
+                        node.run_level = if is_final {
+                            NodeRunLevel::FinalStopped
+                        } else {
+                            NodeRunLevel::Stopped
+                        };
+                        true
+                    }
+                    NodeRunLevel::FinalStopped | NodeRunLevel::Stopped => {
+                        if is_final {
+                            node.run_level = NodeRunLevel::FinalStopped;
+                        }
+                        false
+                    }
+                }
+            });
+            if !was_running {
+                return;
+            }
+            let task_ids = {
+                cx2.with_cx(|context| {
+                    let node = &mut context.executor.nodes[node.to_index()];
+                    node.tasks.iter().copied().collect::<Vec<Id>>()
+                })
+            };
+            for &task in &task_ids {
+                drop(cx2.with_cx(|cx| {
+                    abort_local(
+                        task,
+                        cx2.queue.borrow_mut().as_mut().unwrap(),
+                        &mut cx.executor.tasks,
+                    )
+                }))
+            }
+            for_all_simulators(cx2, false, |x| x.stop_node());
+        });
+    }
+
     fn spawn<F: Future + 'static>(&mut self, node: NodeId, future: F) -> TaskHandle<F::Output> {
-        match self.nodes[node.0].run_level {
+        match self.nodes[node.0.get() - 1].run_level {
             NodeRunLevel::Running => (),
             NodeRunLevel::Stopped | NodeRunLevel::FinalStopped => {
                 panic!("node {node:?} is stopped")
@@ -250,7 +314,7 @@ impl Executor {
             },
         };
         self.tasks.insert(task_id, task_entry);
-        self.nodes[node.0].tasks.insert(task_id);
+        self.nodes[node.0.get() - 1].tasks.insert(task_id);
         <TaskShared as WakeRef>::wake_by_ref(&task_handle.abort.shared);
         task_handle
     }
@@ -260,7 +324,7 @@ impl Executor {
         let task_entry = removed.unwrap();
         debug_assert_eq!(task_entry.shared.id, task_id);
         assert!(task_entry.task.into_inner().is_none());
-        let node = &mut self.nodes[task_entry.shared.node.0];
+        let node = &mut self.nodes[task_entry.shared.node.0.get() - 1];
         let removed = node.tasks.remove(&task_id);
         debug_assert!(removed);
     }
@@ -390,129 +454,8 @@ impl<T> Future for TaskHandle<T> {
 
 /// Spawn a task on the current node.
 pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
-    NodeId::current().spawn_with_handle(future)
+    spawn_task_on_node(NodeId::current(), future)
 }
 
-/// A unique identifier for a node within a simulation.
-#[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NodeId(pub(crate) usize);
-
-impl NodeId {
-    pub const INIT: Self = NodeId(0);
-
-    /// Create a new node that tasks can be run on.
-    ///
-    /// Can only be called from within a simulation.
-    pub fn create_node() -> NodeId {
-        Context2::with(|cx2| {
-            let id = cx2.with_cx(|cx| {
-                let id = NodeId(cx.executor.nodes.len());
-                assert!(
-                    !cx.executor.final_stopped,
-                    "node spawn during simulation shutdown"
-                );
-                cx.executor.nodes.push(NodeData {
-                    run_level: NodeRunLevel::Running,
-                    tasks: HashSet::new(),
-                });
-                cx.event_handler.handle_event(Event::NodeSpawned(id));
-                id
-            });
-            cx2.node_scope(id, || {
-                for_all_simulators(cx2, true, |s| {
-                    s.create_node();
-                });
-            });
-            id
-        })
-    }
-
-    /// Spawn a task on this node and return the handle.
-    pub fn spawn_with_handle<F: Future + 'static>(self, future: F) -> TaskHandle<F::Output> {
-        with_context(|cx| {
-            cx.event_handler.handle_event(Event::TaskSpawned);
-            cx.executor.spawn(self, future)
-        })
-    }
-
-    /// Spawn a task on this node and detach it.
-    pub fn spawn<F: Future + 'static>(self, future: F) {
-        self.spawn_with_handle(future).detach();
-    }
-
-    /// Returns the id of the node this task is running on.
-    ///
-    /// Can only be called from within a simulation.
-    pub fn current() -> Self {
-        Self::try_current().expect("not inside a simulation")
-    }
-
-    /// Returns the id of the current node if within the simulation.
-    /// Returns `None` otherwise.
-    pub fn try_current() -> Option<Self> {
-        Context2::with(|cx2| {
-            if cx2.time.get().is_some() {
-                Some(cx2.current_node())
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Invoke Simulator::stop on all simulators and stop all tasks on this node.
-    ///
-    /// Attempting to spawn tasks on a stopped node will panic.
-    /// Attempting to stop a node that is already stopped does nothing.
-    pub fn stop(self) {
-        self.stop_inner(false);
-    }
-
-    fn stop_inner(self, is_final: bool) {
-        Context2::with_in_node(self, |cx2| {
-            let was_running = cx2.with_cx(|cx| {
-                let node = &mut cx.executor.nodes[self.0];
-                match node.run_level {
-                    NodeRunLevel::Running => {
-                        node.run_level = if is_final {
-                            NodeRunLevel::FinalStopped
-                        } else {
-                            NodeRunLevel::Stopped
-                        };
-                        true
-                    }
-                    NodeRunLevel::FinalStopped | NodeRunLevel::Stopped => {
-                        if is_final {
-                            node.run_level = NodeRunLevel::FinalStopped;
-                        }
-                        false
-                    }
-                }
-            });
-            if !was_running {
-                return;
-            }
-            let task_ids = {
-                cx2.with_cx(|context| {
-                    let node = &mut context.executor.nodes[self.0];
-                    node.tasks.iter().copied().collect::<Vec<Id>>()
-                })
-            };
-            for &task in &task_ids {
-                drop(cx2.with_cx(|cx| {
-                    abort_local(
-                        task,
-                        cx2.queue.borrow_mut().as_mut().unwrap(),
-                        &mut cx.executor.tasks,
-                    )
-                }))
-            }
-            for_all_simulators(cx2, false, |x| x.stop_node());
-        });
-    }
-
-    /// Iterate over all nodes in the current simulation.
-    pub fn all() -> impl Iterator<Item = NodeId> {
-        (0..with_context(|cx| cx.executor.nodes.len())).map(NodeId)
-    }
-}
+// TODO inline
+pub type NodeId = crate::node_id::NodeId;

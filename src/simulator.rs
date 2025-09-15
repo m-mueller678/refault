@@ -113,7 +113,7 @@ impl<S: NodeSimulator> SimulatorHandle<PerNode<S>> {
     ///
     /// See [Self::with] for concerns about locking.
     pub fn with_node<R>(&self, node: NodeId, f: impl FnOnce(&mut S) -> R) -> R {
-        self.with(|s| f(&mut s.simulators[node.0]))
+        self.with(|s| f(&mut s.simulators[node.to_index()]))
     }
 
     /// Call `f` with a mutable reference to the node simulator of the current node.
@@ -173,13 +173,13 @@ impl<S> std::ops::Index<NodeId> for PerNode<S> {
     type Output = S;
 
     fn index(&self, index: NodeId) -> &Self::Output {
-        &self.simulators[index.0]
+        &self.simulators[index.to_index()]
     }
 }
 
 impl<S> std::ops::IndexMut<NodeId> for PerNode<S> {
     fn index_mut(&mut self, index: NodeId) -> &mut Self::Output {
-        &mut self.simulators[index.0]
+        &mut self.simulators[index.to_index()]
     }
 }
 
@@ -189,11 +189,11 @@ impl<S: NodeSimulator> Simulator for PerNode<S> {
     }
 
     fn stop_node(&mut self) {
-        self.simulators[NodeId::current().0].stop_node();
+        self.simulators[NodeId::current().to_index()].stop_node();
     }
 
     fn start_node(&mut self) {
-        self.simulators[NodeId::current().0].start_node();
+        self.simulators[NodeId::current().to_index()].start_node();
     }
 }
 
