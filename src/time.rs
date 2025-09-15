@@ -124,7 +124,7 @@ impl TimeScheduler {
 
     pub(crate) fn wait_until_next_future_ready(
         &mut self,
-        time: &Cell<Option<Duration>>,
+        time: &Cell<Duration>,
         event_handler: &mut dyn EventHandler,
     ) -> bool {
         let Some(next) = self.upcoming_events.peek().map(|x| *x.1) else {
@@ -132,7 +132,7 @@ impl TimeScheduler {
         };
         let dt = next.0.duration_since(self.now);
         event_handler.handle_event(Event::TimeAdvanced(dt));
-        time.set(Some(time.get().unwrap() + dt));
+        time.set(time.get() + dt);
         self.now = next.0;
         while let Some(x) = self.upcoming_events.pop_if(|_, t| t.0 <= self.now) {
             let TimeFutureState::Waiting(waker) =

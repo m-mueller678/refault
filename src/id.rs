@@ -18,6 +18,7 @@ impl Default for Id {
 impl Id {
     pub fn new() -> Self {
         Context2::with(|cx| {
+            let cx = cx.cx3();
             let id = cx.pre_next_global_id.get() + 1;
             cx.pre_next_global_id.set(id);
             Id(NonZeroU64::new(id).unwrap())
@@ -31,6 +32,7 @@ impl IdRange {
     pub fn new(len: usize) -> Self {
         assert!(len > 0);
         Context2::with(|cx| {
+            let cx = cx.cx3();
             let last = cx.pre_next_global_id.get() + len as u64;
             cx.pre_next_global_id.set(last);
             let first = last - (len as u64 - 1);

@@ -68,7 +68,7 @@ impl<T> Drop for SimBound<T> {
 }
 impl<T> SimBound<T> {
     fn current_anchor() -> NonZeroU64 {
-        Context2::with(|cx| cx.thread_anchor().unwrap().id)
+        Context2::with(|cx| cx.cx3().thread_anchor.id)
     }
 
     pub fn unwrap_sim_bound(mut self) -> T {

@@ -231,7 +231,7 @@ impl Executor {
     pub fn final_stop() {
         with_context(|cx| cx.executor.final_stopped = true);
         for node in NodeId::all() {
-            Self::stop_node(node, true);
+            stop_node(node, true);
         }
     }
 
@@ -243,49 +243,6 @@ impl Executor {
             tasks: HashSet::new(),
         });
         id
-    }
-
-    pub fn stop_node(node: crate::node_id::NodeId, is_final: bool) {
-        Context2::with_in_node(node, |cx2| {
-            let was_running = cx2.with_cx(|cx| {
-                let node = &mut cx.executor.nodes[node.to_index()];
-                match node.run_level {
-                    NodeRunLevel::Running => {
-                        node.run_level = if is_final {
-                            NodeRunLevel::FinalStopped
-                        } else {
-                            NodeRunLevel::Stopped
-                        };
-                        true
-                    }
-                    NodeRunLevel::FinalStopped | NodeRunLevel::Stopped => {
-                        if is_final {
-                            node.run_level = NodeRunLevel::FinalStopped;
-                        }
-                        false
-                    }
-                }
-            });
-            if !was_running {
-                return;
-            }
-            let task_ids = {
-                cx2.with_cx(|context| {
-                    let node = &mut context.executor.nodes[node.to_index()];
-                    node.tasks.iter().copied().collect::<Vec<Id>>()
-                })
-            };
-            for &task in &task_ids {
-                drop(cx2.with_cx(|cx| {
-                    abort_local(
-                        task,
-                        cx2.queue.borrow_mut().as_mut().unwrap(),
-                        &mut cx.executor.tasks,
-                    )
-                }))
-            }
-            for_all_simulators(cx2, false, |x| x.stop_node());
-        });
     }
 
     fn spawn<F: Future + 'static>(
@@ -369,7 +326,7 @@ impl Executor {
                 if cx2.with_cx(|cx| {
                     cx.executor
                         .time_scheduler
-                        .wait_until_next_future_ready(&cx2.time, &mut *cx.event_handler)
+                        .wait_until_next_future_ready(&cx2.cx3().time, &mut *cx.event_handler)
                 }) {
                     continue;
                 } else {
@@ -463,4 +420,47 @@ impl<T> Future for TaskHandle<T> {
 /// Spawn a task on the current node.
 pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
     spawn_task_on_node(NodeId::current(), future)
+}
+
+pub fn stop_node(node: NodeId, is_final: bool) {
+    Context2::with_in_node(node, |cx2| {
+        let was_running = cx2.with_cx(|cx| {
+            let node = &mut cx.executor.nodes[node.to_index()];
+            match node.run_level {
+                NodeRunLevel::Running => {
+                    node.run_level = if is_final {
+                        NodeRunLevel::FinalStopped
+                    } else {
+                        NodeRunLevel::Stopped
+                    };
+                    true
+                }
+                NodeRunLevel::FinalStopped | NodeRunLevel::Stopped => {
+                    if is_final {
+                        node.run_level = NodeRunLevel::FinalStopped;
+                    }
+                    false
+                }
+            }
+        });
+        if !was_running {
+            return;
+        }
+        let task_ids = {
+            cx2.with_cx(|context| {
+                let node = &mut context.executor.nodes[node.to_index()];
+                node.tasks.iter().copied().collect::<Vec<Id>>()
+            })
+        };
+        for &task in &task_ids {
+            drop(cx2.with_cx(|cx| {
+                abort_local(
+                    task,
+                    cx2.queue.borrow_mut().as_mut().unwrap(),
+                    &mut cx.executor.tasks,
+                )
+            }))
+        }
+        for_all_simulators(cx2, false, |x| x.stop_node());
+    });
 }

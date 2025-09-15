@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use crate::{
     Context2,
     event::Event,
-    executor::{Executor, spawn_task_on_node},
+    executor::{spawn_task_on_node, stop_node},
     simulator::for_all_simulators,
     with_context,
 };
@@ -44,14 +44,7 @@ impl NodeId {
     ///
     /// Can only be called from within a simulation.
     pub fn current() -> Self {
-        Context2::with(|cx2| {
-            if cx2.time.get().is_some() {
-                Some(cx2.current_node())
-            } else {
-                None
-            }
-        })
-        .expect("not inside a simulation")
+        Context2::with(|cx2| cx2.current_node())
     }
 
     /// Invoke Simulator::stop on all simulators and stop all tasks on this node.
@@ -59,7 +52,7 @@ impl NodeId {
     /// Attempting to spawn tasks on a stopped node will panic.
     /// Attempting to stop a node that is already stopped does nothing.
     pub fn stop(self) {
-        Executor::stop_node(self, false);
+        stop_node(self, false);
     }
 
     /// Iterate over all nodes in the current simulation.

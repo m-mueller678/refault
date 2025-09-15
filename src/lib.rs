@@ -7,7 +7,6 @@
 use crate::{
     event::EventHandler,
     executor::{Executor, ExecutorQueue},
-    node_id::NodeId,
     send_bind::ThreadAnchor,
     simulator::Simulator,
 };
@@ -15,7 +14,7 @@ use rand_chacha::ChaCha12Rng;
 use scopeguard::guard;
 use std::{
     any::TypeId,
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     collections::HashMap,
     time::Duration,
 };
@@ -43,12 +42,7 @@ thread_local! {
     static CONTEXT: Context2 = const {Context2{
         context:RefCell::new(None),
         queue:RefCell::new(None),
-        rng:RefCell::new(None),
-
-        time:Cell::new(None),
-        pre_next_global_id:Cell::new(0),
-        current_node:Cell::new(NodeId::INIT),
-        thread_anchor: Cell::new(None),
+        cx3:OnceCell::new(),
     }};
 }
 
@@ -71,16 +65,20 @@ struct Context {
 
 struct Context2 {
     context: RefCell<Option<Context>>,
-    rng: RefCell<Option<ChaCha12Rng>>,
-    time: Cell<Option<Duration>>,
     queue: RefCell<Option<ExecutorQueue>>,
+    cx3: OnceCell<Context3>,
+}
+
+struct Context3 {
     current_node: Cell<crate::node_id::NodeId>,
-    thread_anchor: Cell<Option<ThreadAnchor>>,
+    thread_anchor: ThreadAnchor,
     pre_next_global_id: Cell<u64>,
+    time: Cell<Duration>,
+    rng: RefCell<ChaCha12Rng>,
 }
 
 pub fn is_in_simulation() -> bool {
-    Context2::with(|cx| cx.time.get().is_some())
+    Context2::with(|cx| cx.cx3.get().is_some())
 }
 
 impl Context2 {
@@ -88,26 +86,25 @@ impl Context2 {
         CONTEXT.with(f)
     }
 
-    pub fn thread_anchor(&self) -> Option<ThreadAnchor> {
-        self.thread_anchor.get()
+    fn cx3(&self) -> &Context3 {
+        self.cx3.get().unwrap()
     }
-
-    pub fn node_scope<R>(&self, node: crate::node_id::NodeId, f: impl FnOnce() -> R) -> R {
-        let calling_node = self.current_node.get();
-        self.current_node.set(node);
-        let _guard = guard((), |()| self.current_node.set(calling_node));
+    fn current_node(&self) -> crate::node_id::NodeId {
+        self.cx3().current_node.get()
+    }
+    fn node_scope<R>(&self, node: crate::node_id::NodeId, f: impl FnOnce() -> R) -> R {
+        let cx3 = self.cx3();
+        let calling_node = cx3.current_node.get();
+        cx3.current_node.set(node);
+        let _guard = guard((), |()| cx3.current_node.set(calling_node));
         f()
     }
 
-    pub fn with_in_node<R>(node: crate::node_id::NodeId, f: impl FnOnce(&Context2) -> R) -> R {
+    fn with_in_node<R>(node: crate::node_id::NodeId, f: impl FnOnce(&Context2) -> R) -> R {
         Self::with(|cx| cx.node_scope(node, || f(cx)))
     }
 
-    pub fn current_node(&self) -> crate::node_id::NodeId {
-        self.current_node.get()
-    }
-
-    pub fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
+    fn with_cx<R>(&self, f: impl FnOnce(&mut Context) -> R) -> R {
         f(self.context.borrow_mut().as_mut().unwrap())
     }
 }

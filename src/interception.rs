@@ -5,8 +5,9 @@ use rand_core::RngCore;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> isize {
-    Context2::with(|context| {
-        if let Some(rng) = &mut *context.rng.borrow_mut() {
+    Context2::with(|cx| {
+        if let Some(cx3) = cx.cx3.get() {
+            let mut rng = cx3.rng.borrow_mut();
             unsafe {
                 // ensure memory is initialized. Hopefully this is optimized out.
                 buf.write_bytes(0, buflen);
@@ -32,8 +33,9 @@ unsafe extern "C" fn clock_gettime(
     _clockid: libc::clockid_t,
     tp: *mut libc::timespec,
 ) -> libc::c_int {
-    Context2::with(|context| {
-        if let Some(time) = context.time.get() {
+    Context2::with(|cx| {
+        if let Some(cx3) = cx.cx3.get() {
+            let time = cx3.time.get();
             unsafe {
                 tp.write(libc::timespec {
                     tv_sec: time.as_secs() as i64,

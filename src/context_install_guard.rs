@@ -1,5 +1,5 @@
 use crate::{
-    CONTEXT, Context, Context2,
+    CONTEXT, Context, Context2, Context3,
     event::EventHandler,
     executor::{Executor, ExecutorQueue},
     node_id::NodeId,
@@ -7,7 +7,12 @@ use crate::{
 };
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
-use std::{collections::HashMap, marker::PhantomData, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    marker::PhantomData,
+    time::Duration,
+};
 
 pub struct ContextInstallGuard(PhantomData<*const ()>);
 
@@ -15,17 +20,16 @@ impl ContextInstallGuard {
     pub fn new(event_handler: Box<dyn EventHandler>, seed: u64, start_time: Duration) -> Self {
         Context2::with(|cx2| {
             debug_assert!(cx2.current_node() == NodeId::INIT);
-            assert!(
-                cx2.thread_anchor
-                    .replace(Some(ThreadAnchor::new()))
-                    .is_none()
-            );
-            assert!(cx2.time.replace(Some(start_time)).is_none());
-            assert!(
-                cx2.rng
-                    .replace(Some(ChaCha12Rng::seed_from_u64(seed)))
-                    .is_none()
-            );
+            cx2.cx3
+                .set(Context3 {
+                    current_node: Cell::new(NodeId::INIT),
+                    thread_anchor: ThreadAnchor::new(),
+                    pre_next_global_id: Cell::new(0),
+                    time: Cell::new(start_time),
+                    rng: RefCell::new(ChaCha12Rng::seed_from_u64(seed)),
+                })
+                .ok()
+                .unwrap();
             assert!(
                 cx2.queue
                     .borrow_mut()
@@ -40,7 +44,6 @@ impl ContextInstallGuard {
                 simulators_by_type: HashMap::new(),
             };
             assert!(cx2.context.borrow_mut().replace(new_context).is_none());
-            assert!(cx2.pre_next_global_id.get() == 0);
         });
         ContextInstallGuard(PhantomData)
     }
@@ -48,15 +51,13 @@ impl ContextInstallGuard {
     pub fn destroy(&mut self) -> Option<Box<dyn EventHandler>> {
         CONTEXT.with(|cx2| {
             debug_assert!(cx2.current_node() == NodeId::INIT);
-            cx2.time.get()?;
+            cx2.context.borrow_mut().as_ref()?;
             assert!(cx2.queue.borrow().as_ref().unwrap().none_ready() || std::thread::panicking());
             Executor::final_stop();
             while let Some(x) = cx2.with_cx(|cx| cx.simulators.pop()) {
                 drop(x.unwrap())
             }
             let Context { event_handler, .. } = cx2.context.take().unwrap();
-            cx2.time.take().unwrap();
-            cx2.rng.take().unwrap();
             Some(event_handler)
         })
     }
