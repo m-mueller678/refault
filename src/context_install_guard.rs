@@ -19,7 +19,6 @@ pub struct ContextInstallGuard(PhantomData<*const ()>);
 impl ContextInstallGuard {
     pub fn new(event_handler: Box<dyn EventHandler>, seed: u64, start_time: Duration) -> Self {
         SimCx::with(|cx| {
-            debug_assert!(cx.current_node() == NodeId::INIT);
             cx.once_cell
                 .set(SimCxu {
                     current_node: Cell::new(NodeId::INIT),
@@ -30,20 +29,15 @@ impl ContextInstallGuard {
                 })
                 .ok()
                 .unwrap();
-            assert!(
-                cx.queue
-                    .borrow_mut()
-                    .replace(ExecutorQueue::new())
-                    .is_none()
-            );
-            let new_context = SimCxl {
+            let old_queue = cx.queue.borrow_mut().replace(ExecutorQueue::new());
+            assert!(old_queue.is_none());
+            let old_context = cx.context.borrow_mut().replace(SimCxl {
                 executor: cx.queue.borrow_mut().as_mut().unwrap().executor(),
                 event_handler,
-                // random is already deterministic at this point.
                 simulators: Vec::new(),
                 simulators_by_type: HashMap::new(),
-            };
-            assert!(cx.context.borrow_mut().replace(new_context).is_none());
+            });
+            assert!(old_context.is_none());
         });
         ContextInstallGuard(PhantomData)
     }
