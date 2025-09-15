@@ -1,6 +1,7 @@
 use crate::send_bind::{NodeBound, SimBound};
 use std::pin::Pin;
 
+/// [SimBound] and [NodeBound].
 pub type SimNodeBound<T> = SimBound<NodeBound<T>>;
 
 impl<T> From<T> for SimBound<NodeBound<T>> {
@@ -9,6 +10,7 @@ impl<T> From<T> for SimBound<NodeBound<T>> {
     }
 }
 
+/// Convenience functions for wrapping values.
 pub trait SimNodeBoundExt: Sized {
     fn sim_node_bound(self) -> SimNodeBound<Self> {
         self.into()

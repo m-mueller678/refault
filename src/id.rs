@@ -1,3 +1,5 @@
+//! Unique Id generation.
+
 use std::{num::NonZeroU64, ops::RangeInclusive};
 
 use super::SimCx;
@@ -16,6 +18,7 @@ impl Default for Id {
 }
 
 impl Id {
+    /// Generate a new unique id.
     pub fn new() -> Self {
         SimCx::with(|cx| {
             let cx = cx.cxu();
@@ -26,9 +29,15 @@ impl Id {
     }
 }
 
+/// A range of [Ids](Id).
+///
+/// This is equivalent to a `Vec<Id>`, but more efficient.
 pub struct IdRange(RangeInclusive<NonZeroU64>);
 
 impl IdRange {
+    /// Generate a new range of [Ids](Id).
+    ///
+    /// Panics if `len == 0`.
     pub fn new(len: usize) -> Self {
         assert!(len > 0);
         SimCx::with(|cx| {
@@ -46,6 +55,7 @@ impl IdRange {
         (self.0.end().get() - self.0.start().get() + 1) as usize
     }
 
+    /// Get the [Id] at index `index`.
     pub fn get(&self, index: usize) -> Id {
         Id(self.0.start().checked_add(index as u64).unwrap())
     }

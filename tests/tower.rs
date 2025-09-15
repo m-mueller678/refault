@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use refault::{
+    NodeId,
     id::Id,
     net::{Addr, Net, perfect_connectivity},
-    node_id::NodeId,
     runtime::Runtime,
     simulator::add_simulator,
     time::sleep,

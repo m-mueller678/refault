@@ -2,9 +2,9 @@
 //!
 //! Within a simulation global objects implementing the [Simulator] trait may be registered and accessed.
 //! These can be used to simulate some external system the program needs to interact with.
-//! For instance, the [PacketNetwork](crate::packet_network::PacketNetwork) simulator contains global state to implement a virtual network between nodes.
+//! For instance, the [Net](crate::net::Net) simulator contains global state to implement a virtual network between nodes.
 //!
-//! A simulator can be registered using [add_simulator] and later accessed using [with_simulator].
+//! A simulator can be registered using [add_simulator] and later accessed using a [SimulatorHandle].
 //! At the end of a simulation, all associated simulators will be destroyed.
 //! There is at most one object for each simulator type in a simulation.
 
@@ -78,24 +78,13 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
     }
 }
 
+/// Access to a simulator.
 pub struct SimulatorHandle<S: Simulator>(PhantomData<Rc<RefCell<S>>>);
 
 impl<S: Simulator> Clone for SimulatorHandle<S> {
     fn clone(&self) -> Self {
         Self(self.0)
     }
-}
-
-/// Get a handle for the simulator
-///
-/// Panics if no simulator of this type has been added.
-pub fn simulator<S: Simulator>() -> SimulatorHandle<S> {
-    SimCxl::with(|cx| {
-        if !cx.simulators_by_type.contains_key(&TypeId::of::<S>()) {
-            panic!("simulator does not exist: {}", type_name::<S>());
-        }
-    });
-    SimulatorHandle(PhantomData)
 }
 
 impl<S: Simulator> SimulatorHandle<S> {
@@ -105,6 +94,18 @@ impl<S: Simulator> SimulatorHandle<S> {
     /// Attempting to acquire another reference to the same simulator within `f` will panic.
     pub fn with<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
         with_simulator_option(|mut x| f(x.as_mut().unwrap()))
+    }
+
+    /// Get a handle for the simulator.
+    ///
+    /// Panics if no simulator of this type has been added.
+    pub fn get() -> Self {
+        SimCxl::with(|cx| {
+            if !cx.simulators_by_type.contains_key(&TypeId::of::<S>()) {
+                panic!("simulator does not exist: {}", type_name::<S>());
+            }
+        });
+        SimulatorHandle(PhantomData)
     }
 }
 

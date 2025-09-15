@@ -1,3 +1,4 @@
+//! A [tower] RPC implementation based on [Net].
 use std::{
     cell::RefCell, collections::HashMap, future::poll_fn, io::ErrorKind, marker::PhantomData,
     rc::Rc, sync::Arc,
@@ -7,6 +8,7 @@ use either::Either::{self, Left, Right};
 use futures::{
     SinkExt, StreamExt,
     channel::{mpsc, oneshot},
+    never::Never,
 };
 use scopeguard::guard;
 use tower::Service;
@@ -15,7 +17,7 @@ use crate::{
     executor::{AbortGuard, spawn},
     id::Id,
     net::{Addr, Net, Packet, Socket},
-    simulator::simulator,
+    simulator::SimulatorHandle,
 };
 
 impl<R: 'static> Packet for TowerRequest<R> {}
@@ -31,6 +33,7 @@ enum TowerResponse<R> {
 type TowerResult<B, E> = Result<B, Either<E, std::io::Error>>;
 type ReqWithSender<A, B, E> = (A, oneshot::Sender<TowerResult<B, E>>);
 
+/// A [Service] that forwards calls to a server running [run_server].
 pub struct Client<A, B, E> {
     request_sender: mpsc::Sender<ReqWithSender<A, B, E>>,
     _send_task: AbortGuard,
@@ -84,7 +87,7 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
                 // if sender is dropped, this task is aborted
                 let (req, responder) = r.next().await.unwrap();
                 let id = Id::new();
-                match simulator::<Net>()
+                match SimulatorHandle::<Net>::get()
                     .with(|net| net.send(local_port, remote, TowerRequest::Start { req, id }))
                     .await
                 {
@@ -132,10 +135,13 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
     }
 }
 
+/// Run a server that handles requests from [Clients](Client).
+///
+/// Each Service call is run on a new task.
 pub async fn run_server<R, S: Service<R>>(
     port: crate::id::Id,
     mut service: S,
-) -> Result<(), Either<S::Error, std::io::Error>>
+) -> Result<Never, Either<S::Error, std::io::Error>>
 where
     R: 'static,
     S::Response: 'static,
@@ -152,7 +158,7 @@ where
                 let local_port = socket.local_port();
                 spawn(async move {
                     let result = fut.await;
-                    simulator::<Net>()
+                    SimulatorHandle::<Net>::get()
                         .with(|net| {
                             net.send(local_port, address, TowerResponse::Complete { result, id })
                         })

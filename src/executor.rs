@@ -1,3 +1,4 @@
+//! Functions for handling tasks.
 use crate::SimCxl;
 use crate::event::Event;
 use crate::id::Id;
@@ -21,7 +22,7 @@ use std::{
     task::Context,
 };
 
-pub struct ExecutorQueue {
+pub(crate) struct ExecutorQueue {
     ready_queue: VecDeque<Id>,
 }
 
@@ -113,7 +114,7 @@ pin_project_lite::pin_project! {
     /// A handle to a task.
     ///
     /// A task handle can be used to await a tasks completion or to abort it.
-    /// Awaiting it will return the value returned by the spawned future or `None` if the task was aborted.
+    /// Awaiting it will return the value returned by the spawned future or a [TaskAborted] error if the task was aborted.
     ///
     /// A task handle should either be polled to completion or destroyd via [detach](Self::detach) or [abort](Self::abort).
     /// Dropping the handle will implicitly detach it.
@@ -127,6 +128,7 @@ pin_project_lite::pin_project! {
     }
 }
 
+/// The error returned from a [TaskHandle] if the associated task was aborted.
 #[derive(Debug)]
 pub struct TaskAborted(());
 
@@ -423,7 +425,7 @@ pub fn spawn<F: Future + 'static>(future: F) -> TaskHandle<F::Output> {
     spawn_task_on_node(NodeId::current(), future)
 }
 
-pub fn stop_node(node: NodeId, is_final: bool) {
+pub(crate) fn stop_node(node: NodeId, is_final: bool) {
     SimCx::with_in_node(node, |cx| {
         let was_running = cx.with_cx(|cxl| {
             let node = &mut cxl.executor.nodes[node.to_index()];

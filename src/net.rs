@@ -7,8 +7,9 @@
 //! A SendFunction may be used to customize network behaviour.
 #![doc=concat!("```\n",include_str!("net/net_doc_example.rs"),"```\n`")]
 use crate::{
+    id::Id,
     node_id::NodeId,
-    simulator::{Simulator, SimulatorHandle, simulator},
+    simulator::{Simulator, SimulatorHandle},
     time::sleep_until,
 };
 use either::Either::{self, Left};
@@ -115,13 +116,13 @@ impl OrderingKey {
 #[derive(Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Addr {
-    pub node: crate::node_id::NodeId,
-    pub port: crate::id::Id,
+    pub node: NodeId,
+    pub port: Id,
 }
 
 /// The function that is invoked to send a packet.
 ///
-/// It is invoked by the network simulator in [send](ConNet::send) and related functions.
+/// It is invoked by the network simulator in [send](Net::send) and related functions.
 /// It is used to customize how the simulated network behaves.
 /// Given a packet, it should invoke methods on the passed [Inboxes] object to cause the recipient to receive the packet.
 /// A send function may choose to deliver the same packet multiple times, not deliver it at all, or deliver errors instead to simulate various network behaviours.
@@ -287,12 +288,12 @@ impl<T: Packet> Socket<T> {
     ///
     /// The socket will receive packets of type `T` that are addressed to this node and port.
     /// Returns an error if there is already a socket with this address.
-    pub fn open(port: crate::id::Id) -> Result<Self, AddrInUseError> {
+    pub fn open(port: Id) -> Result<Self, AddrInUseError> {
         let addr = Addr {
             port,
             node: NodeId::current(),
         };
-        let simulator = simulator::<Net>();
+        let simulator = SimulatorHandle::<Net>::get();
         let ret =
             simulator.with(
                 |net| match net.inboxes.0.entry((addr, ConstTypeId::of::<T>())) {
@@ -316,7 +317,7 @@ impl<T: Packet> Socket<T> {
     }
 
     /// Returns the port this node is bound to.
-    pub fn local_port(&self) -> crate::id::Id {
+    pub fn local_port(&self) -> Id {
         self.local_addr.port
     }
 
@@ -366,7 +367,7 @@ impl<T> Drop for Socket<T> {
 impl Net {
     /// Construct a network simulator.
     ///
-    /// The behaviour of send and receive functions is governed by the given [SendFunctcion].
+    /// The behaviour of send and receive functions is governed by the given [SendFunction].
     pub fn new(send_function: SendFunction) -> Self {
         Self {
             send_function,
@@ -382,10 +383,10 @@ impl Net {
 
     /// Send a packet as if it was sent from a socket bound to `src` on the current node.
     ///
-    /// Invokes the [SendFuntion] the network was created with.
+    /// Invokes the [SendFunction] the network was created with.
     /// This will usually cause the socket with the specified address to receive that packet.
     /// If there is no socket listening on the destination address, or its buffer is full, the packet will be dropped.
-    pub fn send<T: Packet>(&mut self, src_port: crate::id::Id, dst: Addr, packet: T) -> SendFuture {
+    pub fn send<T: Packet>(&mut self, src_port: Id, dst: Addr, packet: T) -> SendFuture {
         self.send_wrapped(PacketRc::new(
             Addr {
                 port: src_port,
@@ -399,7 +400,7 @@ impl Net {
     /// Access the receiver inboxes.
     ///
     /// This should be used by by the [SendFunction] to cause receivers to receive packages or network errors.
-    pub fn queues(&mut self) -> &mut Inboxes {
+    pub fn inboxes(&mut self) -> &mut Inboxes {
         &mut self.inboxes
     }
 }
@@ -426,7 +427,7 @@ impl Inboxes {
     fn enqueue(at: Instant, key: (Addr, ConstTypeId), msg: Result<PacketRc, Error>) {
         NodeId::INIT.spawn(async move {
             sleep_until(at).await;
-            simulator::<Net>().with(|net| {
+            SimulatorHandle::<Net>::get().with(|net| {
                 if let Some(inbox) = net.inboxes.0.get(&key) {
                     inbox.try_send(msg).ok();
                 }

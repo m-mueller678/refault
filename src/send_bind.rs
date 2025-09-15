@@ -1,3 +1,8 @@
+//! Prevent Values from accidentally moving between nodes or out of the simulation.
+//!
+//! The wrapper types in this module perform additional checks on access to ensure the contained values are not moved around inappropriately.
+//!
+//! [SimBound] and [SimNodeBound] also make values [Send] and [Sync], which is useful for interoperating with the async ecosystem.
 pub use crate::send_bind_util::*;
 use crate::{SimCx, node_id::NodeId};
 use scopeguard::guard;
@@ -11,6 +16,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering::Relaxed},
 };
 
+/// Keep values from being moved out of a node.
+///
+/// If the value is moved out of the node and dropped, the contained value is dropped before panicking.
 #[derive(Clone)]
 pub struct NodeBound<T> {
     node: crate::node_id::NodeId,
@@ -44,6 +52,14 @@ impl<T> NodeBound<T> {
     }
 }
 
+/// Keep values from being moved out of the simulation.
+///
+/// As the simulation is single threaded, this wrapper implements [Send] and [Sync] for compatibility with the async ecosystem.
+///
+/// If the value is moved out of the simulation and dropped, the process is aborted.
+/// Unfortunately, aborting is the only sound option:
+/// - Dropping the contained value would allow bypassing [Send].
+/// - Continuing execution without dropping would violate the guarantees of [Pin].
 #[derive(Clone)]
 pub struct SimBound<T> {
     inner: ManuallyDrop<T>,

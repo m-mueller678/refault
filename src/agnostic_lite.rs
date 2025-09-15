@@ -1,3 +1,7 @@
+//! An [agnostic-lite](agnostic_lite) runtime implementation based on refault.
+//!
+//! Some parts of the interface are not yet implemented.
+
 mod timeout;
 
 use crate::{
@@ -15,6 +19,7 @@ use futures::{FutureExt, Stream};
 use std::{future::ready, pin::Pin, time::Instant};
 use timeout::Timeout;
 
+/// The Runtime.
 #[derive(Clone, Copy)]
 pub struct SimRuntime;
 

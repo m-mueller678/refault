@@ -4,10 +4,10 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
+use refault::NodeId;
 use refault::executor::{TaskHandle, spawn};
 use refault::id::Id;
-use refault::node_id::NodeId;
-use refault::simulator::{Simulator, add_simulator, simulator};
+use refault::simulator::{Simulator, SimulatorHandle, add_simulator};
 use refault::{runtime::Runtime, time::sleep};
 use scopeguard::defer;
 
@@ -53,7 +53,7 @@ fn simulator_on_drop() {
     Runtime::new().run(|| async {
         add_simulator(Sim);
         defer! {
-            simulator::<Sim>().with(|_|{})
+            SimulatorHandle::<Sim>::get().with(|_|{})
         }
     })
 }
