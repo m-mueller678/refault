@@ -82,7 +82,6 @@ impl<A: 'static, B: 'static, E: 'static> Client<A, B, E> {
         let responders_2 = responders.clone();
         let local_port = socket.local_port();
         let send_task = spawn(async move {
-            let _g = dbg!(guard((), |()| dbg!()));
             loop {
                 // if sender is dropped, this task is aborted
                 let (req, responder) = r.next().await.unwrap();
