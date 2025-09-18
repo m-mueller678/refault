@@ -22,7 +22,7 @@ categories = [
 
 [features]
 default = ["send-bind"]
-full = ["serde", "tower", "agnostic-lite"]
+full = ["serde", "tower", "agnostic-lite","emit-tracing"]
 serde = ["dep:serde"]
 tower = ["dep:tower"]
 agnostic-lite = ["dep:agnostic-lite", "send-bind"]
