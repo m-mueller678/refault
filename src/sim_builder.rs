@@ -22,9 +22,16 @@ pub struct SimBuilder {
     determinism_check: DeterminismCheck,
 }
 
+/// Specifes the determinism checks performed for a test.
 pub enum DeterminismCheck {
+    /// Run once with no determinism check
     None,
-    Full { iterations: usize },
+    /// Record the first run and compare all other runs for equality.
+    Full {
+        /// The total number fo runs performed, including the first one.
+        /// Must be at least 2.
+        iterations: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -36,6 +43,9 @@ pub struct SimulationOutput<T> {
 }
 
 impl<T> SimulationOutput<T> {
+    /// Unwrap the output of the main future.
+    ///
+    /// This is convenient for verifying that the main future did in fact complete.
     pub fn unwrap(self) -> T {
         self.output
             .expect("simulation root future did not complete")
@@ -70,6 +80,7 @@ impl SimBuilder {
         self
     }
 
+    /// Set the determinism check behaviour.
     pub fn with_determinsim_check(mut self, determinism_check: DeterminismCheck) -> Self {
         self.determinism_check = determinism_check;
         self
@@ -100,7 +111,7 @@ impl SimBuilder {
                 events,
             );
             SimulationOutput {
-                time_elapsed: output.time_elapsed,
+                time_elapsed: output.time_elapsed - self.simulation_start_time,
                 output: Arc::into_inner(ret)
                     .unwrap()
                     .into_inner()
@@ -162,7 +173,7 @@ impl SimBuilder {
                     SimCx::with(|cx| {
                         Executor::run_current_context(cx);
                     });
-                    context_guard.destroy().unwrap()
+                    context_guard.destroy(true).unwrap()
                 })
                 .unwrap()
                 .join();

@@ -34,6 +34,11 @@ impl NodeId {
         })
     }
 
+    #[cfg(feature = "emit-tracing")]
+    pub(crate) fn tv(&self) -> impl tracing::Value {
+        self.0.get()
+    }
+
     /// Spawn a task on this node and detach it.
     pub fn spawn<F: Future + 'static>(self, future: F) {
         spawn_task_on_node(self, future).detach();

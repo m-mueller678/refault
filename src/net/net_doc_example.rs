@@ -8,7 +8,7 @@
 # use std::time::Duration;
 # 
 # fn main() {
-#     SimBuilder::new().run_test(|| async move {
+#     SimBuilder::new_test().run(|| async move {
 struct MyPacket(String);
 impl Packet for MyPacket {}
 add_simulator(Net::new(perfect_connectivity(Duration::from_millis(20))));
@@ -45,5 +45,5 @@ addr2.node.spawn(async move {
     assert!(socket.receive().await.unwrap().0.0 == "pong");
     assert!(socket.receive().await.unwrap().0.0 == "pong2");
 });
-#     });
+#     }).unwrap();
 # }

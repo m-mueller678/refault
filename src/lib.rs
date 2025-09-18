@@ -15,7 +15,7 @@
 //!     let t1 = Instant::now();
 //!     sleep(Duration::from_nanos(5)).await;
 //!     assert_eq!(t1.elapsed().as_nanos(),5);
-//! })
+//! }).unwrap()
 //! ```
 //!
 //! # How it works

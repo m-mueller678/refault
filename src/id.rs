@@ -27,6 +27,11 @@ impl Id {
             Id(NonZeroU64::new(id).unwrap())
         })
     }
+
+    #[cfg(feature = "emit-tracing")]
+    pub(crate) fn tv(&self) -> impl tracing::Value {
+        self.0.get()
+    }
 }
 
 /// A range of [Ids](Id).

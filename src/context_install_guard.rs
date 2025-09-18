@@ -1,7 +1,7 @@
 use crate::{
     SimCx, SimCxl, SimCxu,
     event::EventHandler,
-    executor::{Executor, ExecutorQueue},
+    executor::{ExecutorQueue, stop_simulation},
     node_id::NodeId,
     send_bind::ThreadAnchor,
     sim_builder::SimulationOutput,
@@ -44,13 +44,17 @@ impl ContextInstallGuard {
         ContextInstallGuard(PhantomData)
     }
 
-    pub fn destroy(&mut self) -> Option<SimulationOutput<Never>> {
+    pub fn destroy(&mut self, finalize_events: bool) -> Option<SimulationOutput<Never>> {
         SimCx::with(|cx| {
             debug_assert!(cx.current_node() == NodeId::INIT);
             cx.context.borrow_mut().as_ref()?;
             let time = cx.cxu().time.get();
-            assert!(cx.queue.borrow().as_ref().unwrap().none_ready() || std::thread::panicking());
-            Executor::final_stop();
+            assert!(
+                cx.queue.borrow().as_ref().unwrap().none_ready()
+                    || std::thread::panicking()
+                    || cx.with_cx(|cx| cx.executor.is_final_stopping())
+            );
+            stop_simulation();
             while let Some(x) = cx.with_cx(|cx| cx.simulators.pop()) {
                 drop(x.unwrap())
             }
@@ -59,7 +63,11 @@ impl ContextInstallGuard {
                 // this is later adjusted by simbuilder
                 time_elapsed: time,
                 output: None,
-                events: event_handler.finalize(),
+                events: if finalize_events {
+                    event_handler.finalize()
+                } else {
+                    Box::new(())
+                },
             })
         })
     }
@@ -67,6 +75,6 @@ impl ContextInstallGuard {
 
 impl Drop for ContextInstallGuard {
     fn drop(&mut self) {
-        self.destroy();
+        self.destroy(false);
     }
 }

@@ -30,6 +30,7 @@ fn tower() {
                 run_client(Addr { node: server, port }, vec![Ok(3), Err(2)]),
             )
             .await
+            .unwrap();
         })
         .unwrap();
 }

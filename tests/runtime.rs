@@ -29,6 +29,14 @@ fn node_task_runs() {
 }
 
 #[test]
+fn elapsed_sim_time() {
+    let duration = Duration::from_secs(1);
+    let output = SimBuilder::new_test().run(|| async move { sleep(duration).await });
+    assert_eq!(output.time_elapsed, duration);
+    output.unwrap();
+}
+
+#[test]
 fn id_hashmap() {
     SimBuilder::new_test()
         .run(|| async {

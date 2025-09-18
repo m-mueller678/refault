@@ -76,6 +76,16 @@ struct TaskEntry {
     task: Cell<Option<Pin<Box<dyn TaskDyn>>>>,
 }
 
+impl TaskEntry {
+    #[cfg_attr(not(feature = "emit-tracing"), allow(dead_code))]
+    fn is_task_none(&self) -> bool {
+        let task = self.task.take();
+        let is_none = task.is_none();
+        self.task.set(task);
+        is_none
+    }
+}
+
 pin_project_lite::pin_project! {
     struct Task<F:Future>{
         shared:Arc<TaskShared>,
@@ -98,6 +108,8 @@ impl<F: Future> TaskDyn for Task<F> {
         match this.fut.poll(&mut Context::from_waker(&waker)) {
             Poll::Ready(x) => {
                 this.snd.take().unwrap().send(x).ok();
+                #[cfg(feature = "emit-tracing")]
+                tracing::info!(task = this.shared.id.tv(), "complete");
                 this.shared.state.store(TASK_COMPLETE, Relaxed);
                 false
             }
@@ -200,6 +212,8 @@ impl WakeRef for TaskShared {
             match self.state.load(Relaxed) {
                 TASK_CANCELLED | TASK_COMPLETE | TASK_READY => (),
                 TASK_WAITING => {
+                    #[cfg(feature = "emit-tracing")]
+                    tracing::debug!(task = self.id.tv(), "wake");
                     self.state.store(TASK_READY, Relaxed);
                     ex.ready_queue.push_back(self.id);
                 }
@@ -227,15 +241,8 @@ impl Executor {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
-    pub fn is_final_sopping(&self) -> bool {
+    pub fn is_final_stopping(&self) -> bool {
         self.final_stopped
-    }
-
-    pub fn final_stop() {
-        SimCxl::with(|cx| cx.executor.final_stopped = true);
-        for node in NodeId::all() {
-            stop_node(node, true);
-        }
     }
 
     pub fn push_new_node(&mut self) -> crate::node_id::NodeId {
@@ -261,6 +268,8 @@ impl Executor {
         }
         let (snd, rcv) = oneshot::channel();
         let task_id = Id::new();
+        #[cfg(feature = "emit-tracing")]
+        tracing::info!(task = task_id.tv(), node = node.tv(), "spawn");
         let task = Box::pin(Task {
             snd: Some(snd),
             fut: future,
@@ -300,6 +309,9 @@ impl Executor {
     pub(crate) fn run_current_context(cx: &SimCx) {
         loop {
             let Some(mut task) = cx.with_cx(|cxl| {
+                if cxl.executor.final_stopped {
+                    return None;
+                }
                 loop {
                     let task_id = cx
                         .queue
@@ -338,6 +350,8 @@ impl Executor {
             };
             let &TaskShared { node, id, .. } = &**task.as_base();
             cx.node_scope(node, move || {
+                #[cfg(feature = "emit-tracing")]
+                tracing::debug!(task = id.tv(), "poll");
                 let keep = task.as_mut().run();
                 cx.with_cx(|cx| {
                     if keep {
@@ -372,10 +386,24 @@ fn abort_local(
     match state {
         TASK_CANCELLED | TASK_COMPLETE => None,
         TASK_READY => {
+            #[cfg(feature = "emit-tracing")]
+            tracing::info!(
+                task = task_id.tv(),
+                is_ready = true,
+                is_running = task_entry.is_task_none(),
+                "abort"
+            );
             task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
             task_entry.task.take()
         }
         TASK_WAITING => {
+            #[cfg(feature = "emit-tracing")]
+            tracing::info!(
+                task = task_id.tv(),
+                is_ready = false,
+                is_running = task_entry.is_task_none(),
+                "abort"
+            );
             task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
             queue.ready_queue.push_back(task_id);
             task_entry.task.take()
@@ -468,6 +496,12 @@ pub(crate) fn stop_node(node: NodeId, is_final: bool) {
     });
 }
 
+/// Stop the simulation.
+///
+/// Stops all nodes and aborts all tasks.
 pub fn stop_simulation() {
-    todo!()
+    SimCxl::with(|cx| cx.executor.final_stopped = true);
+    for node in NodeId::all() {
+        stop_node(node, true);
+    }
 }

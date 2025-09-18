@@ -46,7 +46,7 @@ pub trait Simulator: Any {
 pub fn add_simulator<S: Simulator>(simulator: S) {
     let simulator = Some(Box::new(simulator) as Box<_>);
     SimCxl::with(|cx| {
-        assert!(cx.executor.node_count() == 1 && !cx.executor.is_final_sopping());
+        assert!(cx.executor.node_count() == 1 && !cx.executor.is_final_stopping());
         assert!(
             cx.simulators_by_type
                 .insert(TypeId::of::<S>(), cx.simulators.len())

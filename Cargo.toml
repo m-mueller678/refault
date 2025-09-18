@@ -5,8 +5,20 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "deterministic simulation framework for distributed systems using async"
 repository = "https://github.com/m-mueller678/refault"
-keywords = ["deterministic","testing","test-framework","async","distributed-systems"]
-categories = ["development-tools::testing","development-tools::debugging","simulation","virtualization","asynchronous"]
+keywords = [
+  "deterministic",
+  "testing",
+  "test-framework",
+  "async",
+  "distributed-systems",
+]
+categories = [
+  "development-tools::testing",
+  "development-tools::debugging",
+  "simulation",
+  "virtualization",
+  "asynchronous",
+]
 
 [features]
 default = ["send-bind"]
@@ -14,6 +26,7 @@ full = ["serde", "tower", "agnostic-lite"]
 serde = ["dep:serde"]
 tower = ["dep:tower"]
 agnostic-lite = ["dep:agnostic-lite", "send-bind"]
+emit-tracing = ["dep:tracing"]
 send-bind = []
 
 [dependencies]
@@ -29,10 +42,11 @@ either = "1.15"
 scopeguard = "1.2"
 futures-intrusive = "0.5"
 typeid = "1"
+sync_wrapper = "1"
 serde = { optional = true, features = ["derive"], version = "1" }
 tower = { optional = true, version = "0.5.2" }
 agnostic-lite = { optional = true, version = "0.5.6", features = ["time"] }
-sync_wrapper="1"
+tracing = { optional = true, version = "0.1.41" }
 
 [dev-dependencies]
 getrandom = "0.3.3"
