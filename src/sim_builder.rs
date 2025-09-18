@@ -6,7 +6,7 @@ use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, Valida
 use crate::executor::Executor;
 use crate::node_id::NodeId;
 use std::panic::resume_unwind;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -82,6 +82,20 @@ impl SimBuilder {
         for _ in 1..iterations {
             run_with_events(Box::new(ValidatingEventHandler::new(events.clone())));
         }
+    }
+
+    #[doc(hidden)]
+    // This is used to test refault
+    pub fn run_test<F: Future<Output = ()> + 'static>(&self, f: impl FnMut() -> F + Send) {
+        static ITERATIONS: LazyLock<usize> = LazyLock::new(|| {
+            let x = std::env::var("REFAULT_ITERATIONS")
+                .ok()
+                .map(|x| x.parse().unwrap())
+                .unwrap_or(3);
+            println!("running {x} iterations of all tests");
+            x
+        });
+        self.check_determinism(*ITERATIONS, f);
     }
 
     fn run_simulation(

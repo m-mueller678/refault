@@ -8,7 +8,7 @@
 # use std::time::Duration;
 # 
 # fn main() {
-#     SimBuilder::new().run(|| async move {
+#     SimBuilder::new().run_test(|| async move {
 struct MyPacket(String);
 impl Packet for MyPacket {}
 add_simulator(Net::new(perfect_connectivity(Duration::from_millis(20))));

@@ -17,7 +17,7 @@ const NET_LATENCY: Duration = Duration::from_millis(20);
 
 #[test]
 fn tower() {
-    SimBuilder::new().check_determinism(2, || async move {
+    SimBuilder::new().run_test(|| async move {
         add_simulator(Net::new(perfect_connectivity(NET_LATENCY)));
         let server = NodeId::create_node();
         let port = Id::new();

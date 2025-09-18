@@ -1,6 +1,8 @@
 use std::cell::Cell;
 use std::future::pending;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
 use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
@@ -12,9 +14,21 @@ use refault::{SimBuilder, time::sleep};
 use scopeguard::defer;
 
 #[test]
+fn node_task_runs() {
+    SimBuilder::new().run_test(|| async move {
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag2 = flag.clone();
+        NodeId::create_node().spawn(async move {
+            flag2.store(true, Relaxed);
+        });
+        sleep(Duration::from_millis(1)).await;
+        assert!(flag.load(Relaxed));
+    });
+}
+
+#[test]
 fn id_hashmap() {
-    let rt = SimBuilder::new();
-    rt.check_determinism(2, || async {
+    SimBuilder::new().run_test(|| async {
         let map: HashMap<_, _> = (0..10).map(|i| (Id::new(), i)).collect();
         for &x in map.values() {
             sleep(Duration::from_secs(x)).await;
@@ -26,7 +40,7 @@ fn id_hashmap() {
 #[should_panic]
 fn global_state() {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    SimBuilder::new().check_determinism(2, || async {
+    SimBuilder::new().run_test(|| async {
         sleep(Duration::from_secs(
             1 + COUNTER.fetch_add(1, Relaxed) as u64,
         ))
@@ -37,7 +51,7 @@ fn global_state() {
 #[test]
 #[should_panic]
 fn spawn_on_drop() {
-    SimBuilder::new().run(|| async {
+    SimBuilder::new().run_test(|| async {
         defer! {
             spawn(async move{panic!()}).detach();
         }
@@ -50,7 +64,7 @@ impl Simulator for Sim {}
 
 #[test]
 fn simulator_on_drop() {
-    SimBuilder::new().run(|| async {
+    SimBuilder::new().run_test(|| async {
         add_simulator(Sim);
         defer! {
             SimulatorHandle::<Sim>::get().with(|_|{})
@@ -61,7 +75,7 @@ fn simulator_on_drop() {
 #[test]
 #[should_panic]
 fn simulator_after_node() {
-    SimBuilder::new().run(|| async {
+    SimBuilder::new().run_test(|| async {
         NodeId::create_node();
         add_simulator(Sim);
     })
@@ -70,7 +84,7 @@ fn simulator_after_node() {
 #[test]
 #[should_panic]
 fn simulator_after_stop() {
-    SimBuilder::new().run(|| async {
+    SimBuilder::new().run_test(|| async {
         defer! {
             add_simulator(Sim);
         }
@@ -80,7 +94,7 @@ fn simulator_after_stop() {
 
 #[test]
 fn kill_node() {
-    SimBuilder::new().run(|| async {
+    SimBuilder::new().run_test(|| async {
         let rc = Rc::new(Cell::new(0));
         let spawn_on_new_node = || {
             let rc2 = rc.clone();
@@ -106,7 +120,7 @@ fn kill_node() {
 
 #[test]
 fn abort_self() {
-    SimBuilder::new().run(|| async {
+    SimBuilder::new().run_test(|| async {
         let handle = Rc::new(Cell::new(Option::<TaskHandle<()>>::None));
         let h2 = handle.clone();
         let task = spawn(async move {
