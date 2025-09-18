@@ -97,23 +97,25 @@ pin_project_lite::pin_project! {
 
 // TODO this could probably be just a dyn FUture with shared state kepy outside.
 trait TaskDyn {
-    fn run(self: Pin<&mut Self>) -> bool;
+    fn run(self: Pin<&mut Self>) -> Poll<()>;
     fn as_base(&self) -> &Arc<TaskShared>;
 }
 
 impl<F: Future> TaskDyn for Task<F> {
-    fn run(self: Pin<&mut Self>) -> bool {
+    fn run(self: Pin<&mut Self>) -> Poll<()> {
         let this = self.project();
         let waker = this.shared.clone().into_waker();
-        match this.fut.poll(&mut Context::from_waker(&waker)) {
+        let poll_result = {
+            #[cfg(feature = "emit-tracing")]
+            let _guard = this.shared.tracing_span.enter();
+            this.fut.poll(&mut Context::from_waker(&waker))
+        };
+        match poll_result {
             Poll::Ready(x) => {
                 this.snd.take().unwrap().send(x).ok();
-                #[cfg(feature = "emit-tracing")]
-                tracing::info!(task = this.shared.id.tv(), "complete");
-                this.shared.state.store(TASK_COMPLETE, Relaxed);
-                false
+                Poll::Ready(())
             }
-            Poll::Pending => true,
+            Poll::Pending => Poll::Pending,
         }
     }
 
@@ -201,6 +203,8 @@ const TASK_END: usize = 4;
 struct TaskShared {
     state: AtomicUsize,
     id: Id,
+    #[cfg(feature = "emit-tracing")]
+    tracing_span: tracing::Span,
     node: crate::node_id::NodeId,
 }
 
@@ -277,6 +281,12 @@ impl Executor {
                 state: AtomicUsize::new(TASK_WAITING),
                 id: task_id,
                 node,
+                #[cfg(feature = "emit-tracing")]
+                tracing_span: tracing::info_span!(
+                    parent:None,
+                    "task",
+                    task = task_id.tv()
+                ),
             }),
         });
         let task_entry = TaskEntry {
@@ -352,23 +362,30 @@ impl Executor {
             cx.node_scope(node, move || {
                 #[cfg(feature = "emit-tracing")]
                 tracing::debug!(task = id.tv(), "poll");
-                let keep = task.as_mut().run();
+                let poll_result = task.as_mut().run();
                 cx.with_cx(|cx| {
-                    if keep {
-                        match task.as_base().state.load(Relaxed) {
-                            TASK_COMPLETE | TASK_END.. => unreachable!(),
-                            TASK_CANCELLED => {
-                                // task was put into queue by abort, so we should keep the entry in the map
-                                drop(task);
-                            }
-                            TASK_WAITING | TASK_READY => {
-                                let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
-                                assert!(task_entry.task.replace(Some(task)).is_none());
+                    match poll_result {
+                        Poll::Pending => {
+                            match task.as_base().state.load(Relaxed) {
+                                TASK_COMPLETE | TASK_END.. => unreachable!(),
+                                TASK_CANCELLED => {
+                                    // task was put into queue by abort, so we should keep the entry in the map
+                                    drop(task);
+                                }
+                                TASK_WAITING | TASK_READY => {
+                                    let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
+                                    assert!(task_entry.task.replace(Some(task)).is_none());
+                                }
                             }
                         }
-                    } else {
-                        drop(task);
-                        cx.executor.remove_task_entry(id);
+                        Poll::Ready(()) => {
+                            let shared = task.as_base();
+                            shared.state.store(TASK_COMPLETE, Relaxed);
+                            #[cfg(feature = "emit-tracing")]
+                            tracing::info!(task = shared.id.tv(), "complete");
+                            drop(task);
+                            cx.executor.remove_task_entry(id);
+                        }
                     }
                 })
             });
