@@ -467,3 +467,7 @@ pub(crate) fn stop_node(node: NodeId, is_final: bool) {
         for_all_simulators(cx, false, |x| x.stop_node());
     });
 }
+
+pub fn stop_simulation() {
+    todo!()
+}

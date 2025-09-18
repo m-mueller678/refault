@@ -1,14 +1,17 @@
 //! Controlling simulations, tasks and nodes.
+use futures::never::Never;
+use sync_wrapper::SyncWrapper;
+
 use crate::SimCx;
 use crate::context_install_guard::ContextInstallGuard;
 use crate::event::Event;
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
-use crate::executor::Executor;
-use crate::node_id::NodeId;
+use crate::executor::{Executor, spawn, stop_simulation};
+use std::any::Any;
 use std::panic::resume_unwind;
-use std::sync::{Arc, LazyLock};
-use std::thread;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{mem, thread};
 
 /// Running simulations.
 ///
@@ -16,6 +19,27 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub struct SimBuilder {
     seed: u64,
     simulation_start_time: Duration,
+    determinism_check: DeterminismCheck,
+}
+
+pub enum DeterminismCheck {
+    None,
+    Full { iterations: usize },
+}
+
+#[derive(Debug)]
+#[must_use]
+pub struct SimulationOutput<T> {
+    pub time_elapsed: Duration,
+    pub output: Option<T>,
+    pub(crate) events: Box<dyn Any + Send>,
+}
+
+impl<T> SimulationOutput<T> {
+    pub fn unwrap(self) -> T {
+        self.output
+            .expect("simulation root future did not complete")
+    }
 }
 
 impl Default for SimBuilder {
@@ -23,6 +47,7 @@ impl Default for SimBuilder {
         Self {
             seed: 0,
             simulation_start_time: Duration::from_secs(1648339195),
+            determinism_check: DeterminismCheck::Full { iterations: 2 },
         }
     }
 }
@@ -45,48 +70,65 @@ impl SimBuilder {
         self
     }
 
-    /// Run a simulation.
-    /// Within the simulation, `f` is invoked to create a future, which is then spawned on the runtime's executor.
-    /// After `f` completes, the executor starts running.
-    /// The simulation continues until no task can make any more progress.
-    // TODO return number of remaining tasks
-    pub fn run<F: Future<Output = ()> + 'static>(&self, f: impl FnOnce() -> F + Send + 'static) {
-        self.run_simulation(
-            Box::new(|| {
-                NodeId::INIT.spawn(f());
-            }),
-            Box::new(NoopEventHandler),
-        );
+    pub fn with_determinsim_check(mut self, determinism_check: DeterminismCheck) -> Self {
+        self.determinism_check = determinism_check;
+        self
     }
 
-    /// Runs a simulation repeatedly to check if it is deterministic.
-    /// Various events are recorded during the execution.
-    /// If the sequence of events differs between runs, a panic is raised.
-    /// See [run](Self::run) for details how the simulation is run.
-    pub fn check_determinism<F: Future<Output = ()> + 'static>(
+    /// Run the simulation.
+    /// Within the simulation, `f` is invoked to create the root future of the simulation, which is then spawned on the runtime's executor.
+    /// After `f` completes, the executor starts running.
+    /// Both `f` and the future run on the node [NodeId::Init].
+    /// The simulation continues until the root future completes or no task can make any more progress.
+    pub fn run<F: Future<Output: Send> + 'static>(
         &self,
-        iterations: usize,
         mut f: impl FnMut() -> F + Send,
-    ) {
-        assert!(iterations > 1);
-        let event_handler = RecordingEventHandler::new();
+    ) -> SimulationOutput<F::Output> {
         let mut run_with_events = |events| {
-            self.run_simulation(
+            let ret = Arc::new(OnceLock::new());
+            let ret2 = ret.clone();
+            let output = self.run_simulation(
                 Box::new(|| {
-                    NodeId::INIT.spawn(f());
+                    let fut = f();
+                    spawn(async move {
+                        let result = fut.await;
+                        ret2.set(SyncWrapper::new(result)).ok().unwrap();
+                        stop_simulation();
+                    })
+                    .detach();
                 }),
                 events,
-            )
+            );
+            SimulationOutput {
+                time_elapsed: output.time_elapsed,
+                output: Arc::into_inner(ret)
+                    .unwrap()
+                    .into_inner()
+                    .map(SyncWrapper::into_inner),
+                events: output.events,
+            }
         };
-        let events = Arc::new(run_with_events(Box::new(event_handler)));
-        for _ in 1..iterations {
-            run_with_events(Box::new(ValidatingEventHandler::new(events.clone())));
+        match self.determinism_check {
+            DeterminismCheck::None => run_with_events(Box::new(NoopEventHandler)),
+            DeterminismCheck::Full { iterations } => {
+                assert!(iterations > 1);
+                let mut output = run_with_events(Box::new(RecordingEventHandler::new()));
+                let events = Arc::new(
+                    *mem::replace(&mut output.events, Box::new(()))
+                        .downcast::<Vec<Event>>()
+                        .unwrap(),
+                );
+                for _ in 1..iterations {
+                    let _ = run_with_events(Box::new(ValidatingEventHandler::new(events.clone())));
+                }
+                output
+            }
         }
     }
 
     #[doc(hidden)]
     // This is used to test refault
-    pub fn run_test<F: Future<Output = ()> + 'static>(&self, f: impl FnMut() -> F + Send) {
+    pub fn new_test() -> Self {
         static ITERATIONS: LazyLock<usize> = LazyLock::new(|| {
             let x = std::env::var("REFAULT_ITERATIONS")
                 .ok()
@@ -95,14 +137,16 @@ impl SimBuilder {
             println!("running {x} iterations of all tests");
             x
         });
-        self.check_determinism(*ITERATIONS, f);
+        Self::default().with_determinsim_check(DeterminismCheck::Full {
+            iterations: *ITERATIONS,
+        })
     }
 
     fn run_simulation(
         &self,
         init_fn: Box<dyn FnOnce() + Send + '_>,
         event_handler: Box<dyn EventHandler>,
-    ) -> Vec<Event> {
+    ) -> SimulationOutput<Never> {
         // Run the simulation on a new thread to avoid thread local state on this thread interfering
         // with random number generation
         thread::scope(|scope| {
@@ -118,7 +162,7 @@ impl SimBuilder {
                     SimCx::with(|cx| {
                         Executor::run_current_context(cx);
                     });
-                    context_guard.destroy().unwrap().finalize()
+                    context_guard.destroy().unwrap()
                 })
                 .unwrap()
                 .join();

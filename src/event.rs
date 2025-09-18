@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{any::Any, sync::Arc, time::Duration};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Event {
@@ -10,7 +10,7 @@ pub enum Event {
 
 pub(crate) trait EventHandler: Send {
     fn handle_event(&mut self, event: Event);
-    fn finalize(self: Box<Self>) -> Vec<Event>;
+    fn finalize(self: Box<Self>) -> Box<dyn Any + Send>;
 }
 
 pub(crate) struct NoopEventHandler;
@@ -18,8 +18,8 @@ pub(crate) struct NoopEventHandler;
 impl EventHandler for NoopEventHandler {
     fn handle_event(&mut self, _: Event) {}
 
-    fn finalize(self: Box<Self>) -> Vec<Event> {
-        Vec::new()
+    fn finalize(self: Box<Self>) -> Box<dyn Any + Send> {
+        Box::new(())
     }
 }
 
@@ -41,8 +41,8 @@ impl EventHandler for RecordingEventHandler {
         self.recorded_events.push(event);
     }
 
-    fn finalize(self: Box<Self>) -> Vec<Event> {
-        self.recorded_events
+    fn finalize(self: Box<Self>) -> Box<dyn Any + Send> {
+        Box::new(self.recorded_events)
     }
 }
 
@@ -78,12 +78,12 @@ impl EventHandler for ValidatingEventHandler {
         self.next_event_index += 1;
     }
 
-    fn finalize(self: Box<Self>) -> Vec<Event> {
+    fn finalize(self: Box<Self>) -> Box<dyn Any + Send> {
         let index = self.next_event_index;
         let len = self.events_to_validate.len();
         if index != len {
             panic!("Non-Determinism detected: Expected {len} events but only got {index}",);
         }
-        Vec::new()
+        Box::new(())
     }
 }

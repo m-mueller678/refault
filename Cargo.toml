@@ -32,6 +32,7 @@ typeid = "1"
 serde = { optional = true, features = ["derive"], version = "1" }
 tower = { optional = true, version = "0.5.2" }
 agnostic-lite = { optional = true, version = "0.5.6", features = ["time"] }
+sync_wrapper="1"
 
 [dev-dependencies]
 getrandom = "0.3.3"

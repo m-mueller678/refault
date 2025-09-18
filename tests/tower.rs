@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use futures::{StreamExt, stream::FuturesUnordered};
 use refault::{
     NodeId, SimBuilder,
+    executor::spawn_task_on_node,
     id::Id,
     net::{Addr, Net, perfect_connectivity},
     simulator::add_simulator,
@@ -17,14 +18,20 @@ const NET_LATENCY: Duration = Duration::from_millis(20);
 
 #[test]
 fn tower() {
-    SimBuilder::new().run_test(|| async move {
-        add_simulator(Net::new(perfect_connectivity(NET_LATENCY)));
-        let server = NodeId::create_node();
-        let port = Id::new();
-        spawn_server(server, port);
-        sleep(Duration::from_millis(1)).await;
-        NodeId::create_node().spawn(run_client(Addr { node: server, port }, vec![Ok(3), Err(2)]));
-    });
+    SimBuilder::new_test()
+        .run(|| async move {
+            add_simulator(Net::new(perfect_connectivity(NET_LATENCY)));
+            let server = NodeId::create_node();
+            let port = Id::new();
+            spawn_server(server, port);
+            sleep(Duration::from_millis(1)).await;
+            spawn_task_on_node(
+                NodeId::create_node(),
+                run_client(Addr { node: server, port }, vec![Ok(3), Err(2)]),
+            )
+            .await
+        })
+        .unwrap();
 }
 
 fn spawn_server(node: NodeId, port: Id) {

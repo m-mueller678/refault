@@ -4,7 +4,9 @@ use crate::{
     executor::{Executor, ExecutorQueue},
     node_id::NodeId,
     send_bind::ThreadAnchor,
+    sim_builder::SimulationOutput,
 };
+use futures::never::Never;
 use rand_chacha::ChaCha12Rng;
 use rand_core::SeedableRng;
 use std::{
@@ -42,17 +44,23 @@ impl ContextInstallGuard {
         ContextInstallGuard(PhantomData)
     }
 
-    pub fn destroy(&mut self) -> Option<Box<dyn EventHandler>> {
+    pub fn destroy(&mut self) -> Option<SimulationOutput<Never>> {
         SimCx::with(|cx| {
             debug_assert!(cx.current_node() == NodeId::INIT);
             cx.context.borrow_mut().as_ref()?;
+            let time = cx.cxu().time.get();
             assert!(cx.queue.borrow().as_ref().unwrap().none_ready() || std::thread::panicking());
             Executor::final_stop();
             while let Some(x) = cx.with_cx(|cx| cx.simulators.pop()) {
                 drop(x.unwrap())
             }
             let SimCxl { event_handler, .. } = cx.context.take().unwrap();
-            Some(event_handler)
+            Some(SimulationOutput {
+                // this is later adjusted by simbuilder
+                time_elapsed: time,
+                output: None,
+                events: event_handler.finalize(),
+            })
         })
     }
 }
