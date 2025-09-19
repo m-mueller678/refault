@@ -1,4 +1,4 @@
-use refault::{SimBuilder, time::sleep};
+use refault::{sim_builder::SimBuilder, time::sleep};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() {

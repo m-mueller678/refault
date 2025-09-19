@@ -10,7 +10,7 @@ use refault::NodeId;
 use refault::executor::{TaskHandle, spawn};
 use refault::id::Id;
 use refault::simulator::{Simulator, SimulatorHandle, add_simulator};
-use refault::{SimBuilder, time::sleep};
+use refault::{sim_builder::SimBuilder, time::sleep};
 use scopeguard::defer;
 
 #[test]

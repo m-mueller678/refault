@@ -26,7 +26,7 @@ use std::{
 /// The default implementations do nothing.
 pub trait Simulator: Any {
     /// A new node was created via [NodeId::create_node].
-    /// This is not invoked for the first node, which is created by the runtime to run the function passed to [run](crate::SimBuilder::run) and the future it returns.
+    /// This is not invoked for the first node, which is created by the runtime to run the function passed to [run](crate::sim_builder::SimBuilder::run) and the future it returns.
     fn create_node(&mut self) {}
     /// The current node is being shutdown.
     /// This is called before cancelling all tasks.

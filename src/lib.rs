@@ -10,7 +10,7 @@
 //! ```
 //! # use std::time::*;
 //! # use refault::time::sleep;
-//! # use refault::SimBuilder;
+//! # use refault::sim_builder::SimBuilder;
 //! SimBuilder::new().run(||async move{
 //!     let t1 = Instant::now();
 //!     sleep(Duration::from_nanos(5)).await;
@@ -51,7 +51,7 @@
 //! If non-determinism is accidentally introduced, the cause can be very hard to debug.
 //! By default, refault runs your simulation multiple times and compares event traces to detect non-determinism.
 //! It will tell you at which point the executions diverged.
-//! To speed up tests, you may opt out of this via [SimBuilder::with_determinsim_check].
+//! To speed up tests, you may opt out of this via [with_determinsim_check](sim_builder::SimBuilder::with_determinism_check).
 //!
 //! #### The [Simulator] trait
 //! users can register [Simulators](simulator::Simulator).
@@ -125,12 +125,11 @@ mod interception;
 pub mod net;
 pub use node_id::NodeId;
 mod node_id;
-pub use sim_builder::SimBuilder;
 #[cfg(feature = "send-bind")]
 pub mod send_bind;
 #[cfg(feature = "send-bind")]
 mod send_bind_util;
-mod sim_builder;
+pub mod sim_builder;
 pub mod simulator;
 pub mod time;
 #[cfg(feature = "tower")]

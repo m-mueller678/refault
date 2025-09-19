@@ -3,10 +3,11 @@ use std::time::{Duration, Instant};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use refault::{
-    NodeId, SimBuilder,
+    NodeId,
     executor::spawn_task_on_node,
     id::Id,
     net::{Addr, Net, perfect_connectivity},
+    sim_builder::SimBuilder,
     simulator::add_simulator,
     time::sleep,
     tower::{Client, run_server},

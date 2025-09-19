@@ -1,4 +1,4 @@
-use refault::{SimBuilder, executor::spawn, time::sleep};
+use refault::{executor::spawn, sim_builder::SimBuilder, time::sleep};
 use std::time::Duration;
 
 fn main() {

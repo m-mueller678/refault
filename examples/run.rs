@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use refault::{SimBuilder, time::sleep};
+use refault::{sim_builder::SimBuilder, time::sleep};
 
 fn main() {
     SimBuilder::default()

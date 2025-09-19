@@ -1,4 +1,4 @@
-//! Controlling simulations, tasks and nodes.
+//! Running simulations.
 use futures::never::Never;
 use sync_wrapper::SyncWrapper;
 
@@ -14,8 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{mem, thread};
 
 /// Running simulations.
-///
-/// A SimBUilder object is used to configure and start simulations.
 pub struct SimBuilder {
     seed: u64,
     simulation_start_time: Duration,
@@ -23,6 +21,8 @@ pub struct SimBuilder {
 }
 
 /// Specifes the determinism checks performed for a test.
+///
+/// Can be set via [SimBuilder::with_determinism_check].
 pub enum DeterminismCheck {
     /// Run once with no determinism check
     None,
@@ -34,10 +34,19 @@ pub enum DeterminismCheck {
     },
 }
 
+/// The output of a simulation.
+///
+/// This contains the output of the main future along with additional info.
 #[derive(Debug)]
 #[must_use]
 pub struct SimulationOutput<T> {
+    /// The amount of simmulated time elapsed.
     pub time_elapsed: Duration,
+    /// The output of the root future if it completed.
+    /// `None` if the simulation ended before it completed.
+    /// This can happen for two reasons:
+    /// - no more progress could be made (none of the tasks are ready and wake will never be called on them)
+    /// - the simulation was stopped via [stop_simulation].
     pub output: Option<T>,
     pub(crate) events: Box<dyn Any + Send>,
 }
@@ -63,7 +72,9 @@ impl Default for SimBuilder {
 }
 
 impl SimBuilder {
-    /// Construct a new runtime with the default configuration.
+    /// Construct a new builder.
+    ///
+    /// The builder can be used as is to run a simulation, or have more configuration options set.
     pub fn new() -> Self {
         Self::default()
     }
@@ -84,15 +95,16 @@ impl SimBuilder {
     ///
     /// If you are planning to disable determinism checks to speed up tests, consider making it dependent on an environment variable.
     /// Non-determinism can be very frustrating to debug and you may at first not even notice it is happening, so you should have an easy way to turn these checks back on for selected runs.
-    pub fn with_determinsim_check(mut self, determinism_check: DeterminismCheck) -> Self {
+    pub fn with_determinism_check(mut self, determinism_check: DeterminismCheck) -> Self {
         self.determinism_check = determinism_check;
         self
     }
 
     /// Run the simulation.
+    ///
     /// Within the simulation, `f` is invoked to create the root future of the simulation, which is then spawned on the runtime's executor.
     /// After `f` completes, the executor starts running.
-    /// Both `f` and the future run on the node [NodeId::INIT](crate::NodeId::INIT).
+    /// Both `f` and the future run on the node [`NodeId::INIT`](crate::NodeId::INIT).
     /// The simulation continues until the root future completes or no task can make any more progress.
     pub fn run<F: Future<Output: Send> + 'static>(
         &self,
@@ -151,7 +163,7 @@ impl SimBuilder {
             println!("running {x} iterations of all tests");
             x
         });
-        Self::default().with_determinsim_check(DeterminismCheck::Full {
+        Self::default().with_determinism_check(DeterminismCheck::Full {
             iterations: *ITERATIONS,
         })
     }

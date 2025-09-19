@@ -1,6 +1,6 @@
 # use refault::{
 #     net::{Addr, Net, Packet, Socket, perfect_connectivity},
-#     NodeId, SimBuilder,
+#     NodeId, sim_builder::SimBuilder,
 #     id::Id,
 #     simulator::{add_simulator,SimulatorHandle},
 #     time::sleep,

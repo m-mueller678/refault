@@ -1,5 +1,5 @@
 use rand::Rng;
-use refault::SimBuilder;
+use refault::sim_builder::SimBuilder;
 
 fn main() {
     // Retrieve random numbers from different sources
