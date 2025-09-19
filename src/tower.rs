@@ -65,7 +65,6 @@ impl<A, B, E: std::fmt::Debug> Service<A> for Client<A, B, E> {
                 .send((req, s))
                 .await
                 .map_err(|_| Right(ErrorKind::ConnectionReset.into()))?;
-            dbg!();
             r.await
                 .unwrap_or_else(|_| Err(Right(ErrorKind::ConnectionReset.into())))
         }
