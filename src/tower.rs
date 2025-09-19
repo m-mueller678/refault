@@ -153,9 +153,11 @@ where
         poll_fn(|cx| service.poll_ready(cx)).await.map_err(Left)?;
         match request {
             TowerRequest::Start { req, id } => {
+                #[cfg(feature = "emit-tracing")]
+                tracing::info!(id = id.tv(), client = ?address, "start");
                 let fut = service.call(req);
                 let local_port = socket.local_port();
-                spawn(async move {
+                let future = async move {
                     let result = fut.await;
                     SimulatorHandle::<Net>::get()
                         .with(|net| {
@@ -163,8 +165,13 @@ where
                         })
                         .await
                         .ok();
-                })
-                .detach()
+                };
+                #[cfg(feature = "emit-tracing")]
+                let future = tracing::Instrument::instrument(
+                    future,
+                    tracing::error_span!("rpc", id = id.tv()),
+                );
+                spawn(future).detach()
             }
         }
     }
