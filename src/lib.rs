@@ -48,9 +48,10 @@
 //! You can generate unique Ids for use in your simulation code using [id].
 //!
 //! #### Non-Determinism detection:
-//! Refault can be configured to record events throughout the course of a simulation and compare with a previous run.
-//! This can be used to track down accidentally introduced non-determinism.
-//! See [SimBuilder::check_determinism].
+//! If non-determinism is accidentally introduced, the cause can be very hard to debug.
+//! By default, refault runs your simulation multiple times and compares event traces to detect non-determinism.
+//! It will tell you at which point the executions diverged.
+//! To speed up tests, you may opt out of this via [SimBuilder::with_determinsim_check].
 //!
 //! #### The [Simulator] trait
 //! users can register [Simulators](simulator::Simulator).
@@ -89,7 +90,16 @@
 //! Refault runs each simulation in a fresh thread, so using thread local variables might be fine, depending on how you initialize them.
 //! Facilities of the standrad library such as [std::thread_local] should work fine.
 //! However, platform specific mechanisms may perform initialization before refault sets up the simulation context on the thread, so they might bypass the interception of OS facilities.
-
+//!
+//! # Cargo features
+//! | name | description |
+//! | --- | --- |
+//! | `serde` | derive `Serialize` and `Deserialize` on refault types where applicable. |
+//! | `tower` | provide RPC functionality via [Net](net::Net) based on [tower] |
+//! | `agnostic-lite` | provide a [RuntimeLite](::agnostic_lite::RuntimeLite) implementation |
+//! | `emit-tracing` | emit tracing data via [tracing]. This is fairly noisy but sometimes helpful for debugging |
+//! | `send-bind` | Provide wrappers for ensuring data is not moved inappropriately out of the simulation or between nodes and to make types `Send` and `Sync` |
+//!
 use crate::{
     event::EventHandler,
     executor::{Executor, ExecutorQueue},

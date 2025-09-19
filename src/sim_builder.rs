@@ -81,6 +81,9 @@ impl SimBuilder {
     }
 
     /// Set the determinism check behaviour.
+    ///
+    /// If you are planning to disable determinism checks to speed up tests, consider making it dependent on an environment variable.
+    /// Non-determinism can be very frustrating to debug and you may at first not even notice it is happening, so you should have an easy way to turn these checks back on for selected runs.
     pub fn with_determinsim_check(mut self, determinism_check: DeterminismCheck) -> Self {
         self.determinism_check = determinism_check;
         self
@@ -89,7 +92,7 @@ impl SimBuilder {
     /// Run the simulation.
     /// Within the simulation, `f` is invoked to create the root future of the simulation, which is then spawned on the runtime's executor.
     /// After `f` completes, the executor starts running.
-    /// Both `f` and the future run on the node [NodeId::Init].
+    /// Both `f` and the future run on the node [NodeId::INIT](crate::NodeId::INIT).
     /// The simulation continues until the root future completes or no task can make any more progress.
     pub fn run<F: Future<Output: Send> + 'static>(
         &self,
