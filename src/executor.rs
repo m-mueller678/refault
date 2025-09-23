@@ -513,6 +513,28 @@ pub(crate) fn stop_node(node: NodeId, is_final: bool) {
     });
 }
 
+pub(crate) fn start_node(node: NodeId) {
+    SimCx::with_in_node(node, |cx| {
+        let was_running = cx.with_cx(|cxl| {
+            let node = &mut cxl.executor.nodes[node.to_index()];
+            match node.run_level {
+                NodeRunLevel::Running => true,
+                NodeRunLevel::FinalStopped => {
+                    panic!("cannot start node because simulation is shutting down.")
+                }
+                NodeRunLevel::Stopped => {
+                    node.run_level = NodeRunLevel::Running;
+                    false
+                }
+            }
+        });
+        if was_running {
+            return;
+        }
+        for_all_simulators(cx, false, |x| x.start_node());
+    });
+}
+
 /// Stop the simulation.
 ///
 /// Stops all nodes and aborts all tasks.

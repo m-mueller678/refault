@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use crate::{
     SimCx, SimCxl,
     event::Event,
-    executor::{spawn_task_on_node, stop_node},
+    executor::{spawn_task_on_node, start_node, stop_node},
     simulator::for_all_simulators,
 };
 
@@ -57,6 +57,17 @@ impl NodeId {
     /// Attempting to stop a node that is already stopped does nothing.
     pub fn stop(self) {
         stop_node(self, false);
+    }
+
+    /// Invoke Simulator::start on all simulators and allow spawning of new tasks on the node.
+    ///
+    /// This reverses the effects of [Self::stop].
+    /// Attempting to start a node that is already running does nothing.
+    /// New nodes start out in the running state.
+    ///
+    /// Attempting to start a node after it has been stopped as the result of the entire simulation stopping will panic.
+    pub fn start(self) {
+        start_node(self);
     }
 
     /// Iterate over all nodes in the current simulation.
