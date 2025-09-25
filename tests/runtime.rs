@@ -4,10 +4,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
+use std::task::Poll;
 use std::{collections::HashMap, sync::atomic::AtomicUsize, time::Duration};
 
+use futures::future::poll_fn;
+use futures_intrusive::channel::LocalOneshotChannel;
 use refault::NodeId;
-use refault::executor::{TaskHandle, spawn};
+use refault::executor::{AbortHandle, TaskHandle, spawn};
 use refault::id::Id;
 use refault::simulator::{Simulator, SimulatorHandle, add_simulator};
 use refault::{sim_builder::SimBuilder, time::sleep};
@@ -24,6 +27,48 @@ fn node_task_runs() {
             });
             sleep(Duration::from_millis(1)).await;
             assert!(flag.load(Relaxed));
+        })
+        .unwrap();
+}
+
+async fn wake_self() {
+    poll_fn(|cx| {
+        cx.waker().wake_by_ref();
+        Poll::Ready(())
+    })
+    .await
+}
+
+#[test]
+fn wake_and_abort() {
+    SimBuilder::new_test()
+        .run(|| async move {
+            let channel = Rc::new(LocalOneshotChannel::new());
+            let channel2 = channel.clone();
+            let task = spawn(async move {
+                let self_handle: AbortHandle = channel2.receive().await.unwrap();
+                wake_self().await;
+                self_handle.abort();
+            });
+            channel.send(task.abort_handle()).ok().unwrap();
+            task.await.unwrap();
+        })
+        .unwrap();
+}
+
+#[test]
+fn abort_and_wake() {
+    SimBuilder::new_test()
+        .run(|| async move {
+            let channel = Rc::new(LocalOneshotChannel::new());
+            let channel2 = channel.clone();
+            let task = spawn(async move {
+                let self_handle: AbortHandle = channel2.receive().await.unwrap();
+                self_handle.abort();
+                wake_self().await;
+            });
+            channel.send(task.abort_handle()).ok().unwrap();
+            task.await.unwrap();
         })
         .unwrap();
 }
