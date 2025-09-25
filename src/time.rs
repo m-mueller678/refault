@@ -130,6 +130,8 @@ impl TimeScheduler {
         let Some(next) = self.upcoming_events.peek().map(|x| *x.1) else {
             return false;
         };
+        #[cfg(feature = "emit-tracing")]
+        tracing::debug!("advance-time");
         let dt = next.0.duration_since(self.now);
         event_handler.handle_event(Event::TimeAdvanced(dt));
         time.set(time.get() + dt);

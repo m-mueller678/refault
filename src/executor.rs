@@ -330,6 +330,8 @@ impl Executor {
                         .unwrap()
                         .ready_queue
                         .pop_front()?;
+                    #[cfg(feature = "emit-tracing")]
+                    tracing::trace!(task = task_id.tv(), "popped");
                     let task_entry = cxl.executor.tasks.get_mut(&task_id).unwrap();
                     match task_entry.shared.state.load(Relaxed) {
                         TASK_READY => {
@@ -494,6 +496,10 @@ pub(crate) fn stop_node(node: NodeId, is_final: bool) {
         if !was_running {
             return;
         }
+        #[cfg(feature = "emit-tracing")]
+        let span = tracing::info_span!("stop-node", node = node.tv());
+        #[cfg(feature = "emit-tracing")]
+        let _guard = span.enter();
         let task_ids = {
             cx.with_cx(|context| {
                 let node = &mut context.executor.nodes[node.to_index()];
@@ -531,6 +537,10 @@ pub(crate) fn start_node(node: NodeId) {
         if was_running {
             return;
         }
+        #[cfg(feature = "emit-tracing")]
+        let span = tracing::info_span!("start-node", node = node.tv());
+        #[cfg(feature = "emit-tracing")]
+        let _guard = span.enter();
         for_all_simulators(cx, false, |x| x.start_node());
     });
 }
