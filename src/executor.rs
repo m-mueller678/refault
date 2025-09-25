@@ -52,7 +52,8 @@ impl ExecutorQueue {
 
 pub(crate) struct Executor {
     // each entry corresponds to one TaskShared
-    // entries are None while the task is executing, cancelled, or completed
+    // entries are None while the task is executing, aborted, or completed
+    // entries are removed from the map by executor main loop when popping an aborted task or completing a task
     #[allow(clippy::type_complexity)]
     tasks: HashMap<Id, TaskEntry>,
     final_stopped: bool,
@@ -194,11 +195,13 @@ impl Drop for AbortGuard {
     }
 }
 
-const TASK_CANCELLED: usize = 0;
-const TASK_READY: usize = 1;
-const TASK_WAITING: usize = 2;
-const TASK_COMPLETE: usize = 3;
-const TASK_END: usize = 4;
+const TASK_COMPLETE_READY: usize = 0;
+const TASK_COMPLETE: usize = 1;
+const TASK_ABORTED_READY: usize = 2;
+const TASK_ABORTED: usize = 3;
+const TASK_READY: usize = 4;
+const TASK_WAITING: usize = 5;
+const TASK_END: usize = 6;
 
 struct TaskShared {
     state: AtomicUsize,
@@ -214,7 +217,8 @@ impl WakeRef for TaskShared {
             let mut ex = cx.queue.borrow_mut();
             let ex = ex.as_mut().unwrap();
             match self.state.load(Relaxed) {
-                TASK_CANCELLED | TASK_COMPLETE | TASK_READY => (),
+                TASK_COMPLETE | TASK_COMPLETE_READY | TASK_ABORTED | TASK_ABORTED_READY
+                | TASK_READY => (),
                 TASK_WAITING => {
                     #[cfg(feature = "emit-tracing")]
                     tracing::debug!(task = self.id.tv(), "wake");
@@ -341,12 +345,20 @@ impl Executor {
                             task_entry.shared.state.store(TASK_WAITING, Relaxed);
                             return Some(task);
                         }
-                        TASK_CANCELLED => {
+                        state @ (TASK_COMPLETE_READY | TASK_ABORTED_READY) => {
                             let id = task_entry.shared.id;
+                            task_entry.shared.state.store(
+                                match state {
+                                    TASK_COMPLETE_READY => TASK_COMPLETE,
+                                    TASK_ABORTED_READY => TASK_ABORTED,
+                                    _ => unreachable!(),
+                                },
+                                Relaxed,
+                            );
                             cxl.executor.remove_task_entry(id);
                             continue;
                         }
-                        TASK_COMPLETE | TASK_WAITING | TASK_END.. => unreachable!(),
+                        TASK_COMPLETE | TASK_ABORTED | TASK_WAITING | TASK_END.. => unreachable!(),
                     }
                 }
             }) else {
@@ -365,28 +377,42 @@ impl Executor {
                 #[cfg(feature = "emit-tracing")]
                 tracing::debug!(task = id.tv(), "poll");
                 let poll_result = task.as_mut().run();
-                cx.with_cx(|cx| {
+                cx.with_cx(|cxl| {
                     match poll_result {
                         Poll::Pending => {
                             match task.as_base().state.load(Relaxed) {
-                                TASK_COMPLETE | TASK_END.. => unreachable!(),
-                                TASK_CANCELLED => {
+                                TASK_ABORTED_READY => {
                                     // task was put into queue by abort, so we should keep the entry in the map
                                     drop(task);
                                 }
                                 TASK_WAITING | TASK_READY => {
-                                    let task_entry = cx.executor.tasks.get_mut(&id).unwrap();
+                                    let task_entry = cxl.executor.tasks.get_mut(&id).unwrap();
                                     assert!(task_entry.task.replace(Some(task)).is_none());
+                                }
+                                TASK_ABORTED | TASK_COMPLETE | TASK_COMPLETE_READY | TASK_END.. => {
+                                    // aborted is unreachable because aborting during the task execution would also queue the task.
+                                    unreachable!()
                                 }
                             }
                         }
                         Poll::Ready(()) => {
                             let shared = task.as_base();
-                            shared.state.store(TASK_COMPLETE, Relaxed);
                             #[cfg(feature = "emit-tracing")]
                             tracing::info!(task = shared.id.tv(), "complete");
+                            match shared.state.load(Relaxed) {
+                                TASK_ABORTED | TASK_COMPLETE | TASK_COMPLETE_READY | TASK_END.. => {
+                                    unreachable!()
+                                }
+                                TASK_WAITING => {
+                                    shared.state.store(TASK_COMPLETE, Relaxed);
+                                    cxl.executor.remove_task_entry(id);
+                                }
+                                TASK_READY | TASK_ABORTED_READY => {
+                                    shared.state.store(TASK_COMPLETE_READY, Relaxed);
+                                    //task is still in queue, keep the entry
+                                }
+                            };
                             drop(task);
-                            cx.executor.remove_task_entry(id);
                         }
                     }
                 })
@@ -403,7 +429,7 @@ fn abort_local(
     let task_entry = tasks.get_mut(&task_id)?;
     let state = task_entry.shared.state.load(Relaxed);
     match state {
-        TASK_CANCELLED | TASK_COMPLETE => None,
+        TASK_ABORTED | TASK_ABORTED_READY | TASK_COMPLETE | TASK_COMPLETE_READY => None,
         TASK_READY => {
             #[cfg(feature = "emit-tracing")]
             tracing::info!(
@@ -412,7 +438,7 @@ fn abort_local(
                 is_running = task_entry.is_task_none(),
                 "abort"
             );
-            task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
+            task_entry.shared.state.store(TASK_ABORTED_READY, Relaxed);
             task_entry.task.take()
         }
         TASK_WAITING => {
@@ -423,7 +449,7 @@ fn abort_local(
                 is_running = task_entry.is_task_none(),
                 "abort"
             );
-            task_entry.shared.state.store(TASK_CANCELLED, Relaxed);
+            task_entry.shared.state.store(TASK_ABORTED_READY, Relaxed);
             queue.ready_queue.push_back(task_id);
             task_entry.task.take()
         }
