@@ -153,8 +153,8 @@ pub(crate) fn for_all_simulators(cx: &SimCx, forward: bool, mut f: impl FnMut(&m
 /// This is a node-scoped version of [Simulator].
 /// Use this together with [PerNode].
 pub trait NodeSimulator: 'static {
-    fn stop_node(&mut self);
-    fn start_node(&mut self);
+    fn stop_node(&mut self) {}
+    fn start_node(&mut self) {}
 }
 
 /// Node-scoped singletons.
