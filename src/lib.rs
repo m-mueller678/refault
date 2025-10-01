@@ -103,7 +103,6 @@
 use crate::{
     event::EventHandler,
     executor::{Executor, ExecutorQueue},
-    send_bind::ThreadAnchor,
     simulator::Simulator,
 };
 use rand_chacha::ChaCha12Rng;
@@ -150,7 +149,8 @@ struct SimCxl {
 
 struct SimCxu {
     current_node: Cell<crate::node_id::NodeId>,
-    thread_anchor: ThreadAnchor,
+    #[cfg(feature = "send-bind")]
+    thread_anchor: send_bind::ThreadAnchor,
     pre_next_global_id: Cell<u64>,
     time: Cell<Duration>,
     rng: RefCell<ChaCha12Rng>,

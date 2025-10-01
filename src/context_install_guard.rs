@@ -3,7 +3,6 @@ use crate::{
     event::EventHandler,
     executor::{ExecutorQueue, stop_simulation},
     node_id::NodeId,
-    send_bind::ThreadAnchor,
     sim_builder::SimulationOutput,
 };
 use futures::never::Never;
@@ -24,7 +23,8 @@ impl ContextInstallGuard {
             cx.once_cell
                 .set(SimCxu {
                     current_node: Cell::new(NodeId::INIT),
-                    thread_anchor: ThreadAnchor::new(),
+                    #[cfg(feature = "send-bind")]
+                    thread_anchor: crate::send_bind::ThreadAnchor::new(),
                     pre_next_global_id: Cell::new(0),
                     time: Cell::new(start_time),
                     rng: RefCell::new(ChaCha12Rng::seed_from_u64(seed)),
