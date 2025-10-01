@@ -81,6 +81,11 @@ fn with_simulator_option<S: Simulator, R>(f: impl FnOnce(Option<&mut S>) -> R) -
 /// Access to a simulator.
 pub struct SimulatorHandle<S: Simulator>(PhantomData<Rc<RefCell<S>>>);
 
+/// Run a functio wth a mutable reference to a simulator.
+pub fn with_simulator<S: Simulator, R>(f: impl FnOnce(&mut S) -> R) -> R {
+    SimulatorHandle::get().with(f)
+}
+
 impl<S: Simulator> Clone for SimulatorHandle<S> {
     fn clone(&self) -> Self {
         Self(self.0)
