@@ -36,10 +36,12 @@ impl<T> Drop for NodeBound<T> {
 }
 
 impl<T> NodeBound<T> {
+    #[track_caller]
     fn check(&self) {
         assert_eq!(self.node, NodeId::current());
     }
 
+    #[track_caller]
     pub fn unwrap_node_bound(mut self) -> T {
         self.check();
         let ret = unsafe {
@@ -87,6 +89,7 @@ impl<T> SimBound<T> {
         SimCx::with(|cx| cx.cxu().thread_anchor.id)
     }
 
+    #[track_caller]
     pub fn unwrap_sim_bound(mut self) -> T {
         self.check();
         let ret = unsafe {
@@ -98,6 +101,7 @@ impl<T> SimBound<T> {
         ret
     }
 
+    #[track_caller]
     fn check(&self) {
         assert_eq!(self.id, Self::current_anchor());
     }
@@ -164,6 +168,7 @@ macro_rules! impl_traits {
         impl<T> Deref for $W<T> {
             type Target = T;
 
+            #[track_caller]
             fn deref(&self) -> &Self::Target {
                 self.check();
                 &self.inner
@@ -171,6 +176,7 @@ macro_rules! impl_traits {
         }
 
         impl<T> DerefMut for $W<T> {
+            #[track_caller]
             fn deref_mut(&mut self) -> &mut Self::Target {
                 self.check();
                 &mut self.inner

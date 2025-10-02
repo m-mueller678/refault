@@ -55,6 +55,7 @@ impl<T> SimulationOutput<T> {
     /// Unwrap the output of the main future.
     ///
     /// This is convenient for verifying that the main future did in fact complete.
+    #[track_caller]
     pub fn unwrap(self) -> T {
         self.output
             .expect("simulation root future did not complete")
