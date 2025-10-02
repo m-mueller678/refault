@@ -47,6 +47,7 @@ serde = { optional = true, features = ["derive"], version = "1" }
 tower = { optional = true, version = "0.5.2" }
 agnostic-lite = { optional = true, version = "0.5.6", features = ["time"] }
 tracing = { optional = true, version = "0.1.41" }
+ahash = "0.8.12"
 
 [dev-dependencies]
 getrandom = "0.3.3"

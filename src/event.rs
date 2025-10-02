@@ -1,6 +1,9 @@
+use std::hash::Hasher;
 use std::{any::Any, sync::Arc, time::Duration};
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+use ahash::AHasher;
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum Event {
     TaskRun(crate::id::Id),
     TimeAdvanced(Duration),
@@ -83,6 +86,49 @@ impl EventHandler for ValidatingEventHandler {
         let len = self.events_to_validate.len();
         if index != len {
             panic!("Non-Determinism detected: Expected {len} events but only got {index}",);
+        }
+        Box::new(())
+    }
+}
+
+#[derive(Default)]
+pub struct HashRecordingEventHandler {
+    hasher: AHasher,
+}
+
+impl EventHandler for HashRecordingEventHandler {
+    fn handle_event(&mut self, event: Event) {
+        std::hash::Hash::hash(&event, &mut self.hasher);
+    }
+
+    fn finalize(self: Box<Self>) -> Box<dyn Any + Send> {
+        Box::new(self.hasher.finish())
+    }
+}
+
+pub struct HashValidatingEventHandler {
+    hasher: AHasher,
+    expected: u64,
+}
+
+impl HashValidatingEventHandler {
+    pub fn new(expected: u64) -> Self {
+        HashValidatingEventHandler {
+            hasher: Default::default(),
+            expected,
+        }
+    }
+}
+
+impl EventHandler for HashValidatingEventHandler {
+    fn handle_event(&mut self, event: Event) {
+        std::hash::Hash::hash(&event, &mut self.hasher);
+    }
+
+    fn finalize(self: Box<Self>) -> Box<dyn Any + Send> {
+        let actual = self.hasher.finish();
+        if actual != self.expected {
+            panic!("Event sequences differ");
         }
         Box::new(())
     }

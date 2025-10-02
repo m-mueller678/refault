@@ -4,7 +4,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::SimCx;
 use crate::context_install_guard::ContextInstallGuard;
-use crate::event::Event;
+use crate::event::{Event, HashRecordingEventHandler, HashValidatingEventHandler};
 use crate::event::{EventHandler, NoopEventHandler, RecordingEventHandler, ValidatingEventHandler};
 use crate::executor::{Executor, spawn, stop_simulation};
 use std::any::Any;
@@ -32,6 +32,9 @@ pub enum DeterminismCheck {
         /// Must be at least 2.
         iterations: usize,
     },
+    /// Record a hash of the first run and compare all other runs for equality.
+    /// This gives less usefull error messages than [Full](Self::Full), but uses less memory.
+    Hash { iterations: usize },
 }
 
 /// The output of a simulation.
@@ -147,6 +150,17 @@ impl SimBuilder {
                 );
                 for _ in 1..iterations {
                     let _ = run_with_events(Box::new(ValidatingEventHandler::new(events.clone())));
+                }
+                output
+            }
+            DeterminismCheck::Hash { iterations } => {
+                assert!(iterations > 1);
+                let mut output = run_with_events(Box::<HashRecordingEventHandler>::default());
+                let event_hash = *mem::replace(&mut output.events, Box::new(()))
+                    .downcast::<u64>()
+                    .unwrap();
+                for _ in 1..iterations {
+                    let _ = run_with_events(Box::new(HashValidatingEventHandler::new(event_hash)));
                 }
                 output
             }
