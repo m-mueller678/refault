@@ -575,7 +575,13 @@ pub(crate) fn start_node(node: NodeId) {
 ///
 /// Stops all nodes and aborts all tasks.
 pub fn stop_simulation() {
-    SimCxl::with(|cx| cx.executor.final_stopped = true);
+    SimCxl::with(|cx| {
+        if !cx.executor.final_stopped {
+            #[cfg(feature = "emit-tracing")]
+            tracing::info!("stopping executor");
+        };
+        cx.executor.final_stopped = true
+    });
     for node in NodeId::all() {
         stop_node(node, true);
     }

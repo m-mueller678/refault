@@ -128,6 +128,8 @@ impl TimeScheduler {
         event_handler: &mut dyn EventHandler,
     ) -> bool {
         let Some(next) = self.upcoming_events.peek().map(|x| *x.1) else {
+            #[cfg(feature = "emit-tracing")]
+            tracing::info!("no Sleep futures to advance time to");
             return false;
         };
         #[cfg(feature = "emit-tracing")]
