@@ -29,7 +29,8 @@ impl Id {
     }
 
     #[cfg(feature = "emit-tracing")]
-    pub(crate) fn tv(&self) -> impl tracing::Value {
+    /// Turn this id into a value that can be recorded with [tracing].
+    pub fn tv(&self) -> impl tracing::Value {
         self.0.get()
     }
 }
